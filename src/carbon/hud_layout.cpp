@@ -35,18 +35,17 @@ struct Piece {
     HudItem item;
 };
 constexpr Piece kPieces[] = {
-    // HUD_SingleRace.fng as Carbon dumps it: the cluster at 0x5D0101F1 holds the speedometer's group and the race's
-    // information, the race's own root the minimap's groups. Names shared with Most Wanted's package keep its hashes
-    {0x941FFF09, kHudSpeedometer},  // SpeedometerGroup, in the cluster
-    {0x0F365871, kHudMinimap},      // TRACK_MAP: the four map tiles
+    // HUD_SingleRace.fng as Carbon dumps it: FB3B0BD0 holds the minimap's container (1603009E, the ring, the rim, the
+    // roads and the waypoint under it), the icons (00A1A862) and TRACK_MAP's tiles (0F365871); the cluster (5D0101F1)
+    // holds the race's information (B1C5ED0D with the position's, the lap's and the time's digits under it, the racers
+    // in 5ED609A1) and the speedometer's own cluster (AB8A0643, the dial and the digits' group 941FFF09). EA Trax's
+    // banner is a root object of its package. Only containers are listed: a group found is not walked into, so its
+    // children move with it and must not be moved again
+    {0xAB8A0643, kHudSpeedometer},  // the cluster: the dial and SpeedometerGroup's digits
+    {0x1603009E, kHudMinimap},      // the map: the ring, the rim, the roads, the waypoint
     {0x00A1A862, kHudMinimap},      // the map's icons: the player's arrow, the cops, the events
-    {0xC46A80A9, kHudMinimap},      // the map's rim and the heat level over it
-    {0x157C5B37, kHudMinimap},      // TRACKMAPTARGETRING's group: the ring round the event the map points to
-    {0x3345911D, kHudMinimap},      // the ring's image
+    {0x0F365871, kHudMinimap},      // TRACK_MAP: the four map tiles
     {0xB1C5ED0D, kHudRaceInfo},     // RaceInformationGroup: the position, the lap and the time
-    {0x0F84EB22, kHudRaceInfo},     // the position's digits
-    {0x30D9802E, kHudRaceInfo},     // the lap's
-    {0x44EB106B, kHudRaceInfo},     // the time's
     {0x5ED609A1, kHudRaceInfo},     // LeaderBoardGroup: the racers under it
     {0x7FAC287B, kHudTrax},         // EA Trax's banner, in the race's package and in the front end's
 };

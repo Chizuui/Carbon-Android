@@ -52,6 +52,7 @@ constexpr Entry kEntries[] = {
     {"YELLOW TINT", {u"Teinte jaune", u"Gelbstich", u"Tinta gialla", u"Tinte amarillo", u"Filter kuning"}},
     {"BLOOM", {u"Flou lumineux", u"Bloom", u"Bloom", u"Resplandor", u"Bloom"}},
     {"ASPECT RATIO", {{}, {}, {}, {}, u"Rasio aspek"}},
+    {"BRIGHTNESS", {u"Luminosité", u"Helligkeit", u"Luminosità", u"Brillo", u"Kecerahan"}},
     {"FULL SCREEN", {{}, {}, {}, {}, u"Layar penuh"}},
     {"SCREEN FILTER", {{}, {}, {}, {}, u"Filter layar"}},
     {"SHARPEN", {{}, {}, {}, {}, u"Pertajam"}},

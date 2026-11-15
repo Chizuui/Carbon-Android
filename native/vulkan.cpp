@@ -194,7 +194,9 @@ float4 psmain(O i) : SV_Target {
     if (opts.x > 0) c = float3(lut.Sample(ps, float2(c.r, 0.5)).r, lut.Sample(ps, float2(c.g, 0.5)).g, lut.Sample(ps, float2(c.b, 0.5)).b);
     // after the game's gamma ramp, so a brightness set high is held back too
     if (mode == 5) c = saturate(Hdr(c));
-    return float4(c, 1);
+    // the player's brightness as a gamma curve: it lifts the shadows the phone's dark screen swallows, without the
+    // clipped highlights a multiply gives
+    return float4(pow(saturate(c), float3(1.0 / post.z, 1.0 / post.z, 1.0 / post.z)), 1);
 }
 )";
 
@@ -3753,13 +3755,15 @@ void VulkanBackend::DrawFrame(Target* t, uint32_t index) {
     float c[16] = {0, 0, 1, 1, gamma_ ? 1.0f : 0.0f, 0, 1, 1};
     // the screen filter and anti-aliasing, off unless the player picks them: the plain blit then
     uint32_t filter = game::Opt().screen_filter, aa = game::Opt().anti_aliasing;
-    bool post = t && (filter || aa);
+    float brightness = float(std::clamp<uint32_t>(game::Opt().brightness, 50, 200)) / 100.0f;
+    bool post = t && (filter || aa || brightness != 1.0f);
     if (post) {
         c[8] = 1.0f / float(std::max(t->w, 1u));
         c[9] = 1.0f / float(std::max(t->h, 1u));
         c[10] = float(t->gh ? t->gh : guest_h_);
         c[12] = float(filter);
         c[13] = aa == game::kAaFxaa ? 1.0f : 0.0f;
+        c[14] = brightness;
         // supersampled: the texels each screen pixel covers, averaged
         if (aa == game::kAaSsaa) c[6] = std::clamp(std::round(float(t->h) / std::max(vh, 1.0f)), 1.0f, 4.0f);
     }

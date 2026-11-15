@@ -118,6 +118,7 @@ const app::GameInfo app::kGame = {
                 {"fps_position", nullptr, &game::Opt().fps_position},
                 {"audio_output", nullptr, &game::Opt().audio_output},
                 {"aspect_ratio", nullptr, &game::Opt().aspect_ratio},
+                {"brightness", nullptr, &game::Opt().brightness},
                 {"screen_filter", nullptr, &game::Opt().screen_filter},
                 {"anti_aliasing", nullptr, &game::Opt().anti_aliasing}},
     .load = game::Load,

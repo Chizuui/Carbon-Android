@@ -247,7 +247,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
-             kSkipMovies, kYellowTint, kMotionBlur, kShaderPreload };
+             kSkipMovies, kYellowTint, kMotionBlur, kShaderPreload, kBrightness };
 
 using rows::Kind;
 using rows::Row;
@@ -257,6 +257,7 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Heading, -1, "DISPLAY"},
     {Kind::Value, kRenderResolution, "RENDER RESOLUTION"},
     {Kind::Value, kAspectRatio, "ASPECT RATIO"},
+    {Kind::Value, kBrightness, "BRIGHTNESS"},
     {Kind::Heading, -1, "PERFORMANCE"},
     {Kind::Value, kVsync, "VERTICAL SYNC"},
     {Kind::Value, kMaxFps, "MAX FRAME RATE"},
@@ -426,6 +427,12 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
         case kScreenFilter:
             std::snprintf(text, sizeof(text), "%s", kScreenFilterNames[StepTable(kScreenFilters, o.screen_filter, step)]);
             return true;
+        case kBrightness: {
+            // the frame's gamma, 50% to 200%: the game is dark on a phone's screen
+            if (step) o.brightness = uint32_t(StepRange(int(o.brightness), 50, 200, 5, step));
+            std::snprintf(text, sizeof(text), "%u%%", o.brightness);
+            return true;
+        }
         case kReflections:
             std::snprintf(text, sizeof(text), "%s", kReflectionRateNames[StepTable(kReflectionRates, o.reflections, step)]);
             return true;

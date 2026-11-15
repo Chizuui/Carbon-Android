@@ -461,7 +461,15 @@ using ::game::kCFEng;  // cFEng's instance: FEngine at its first field, the pack
 static void DumpObjects(uint32_t o, int depth, int& budget) {
     for (; o && budget-- > 0; o = kernel::R32(o + 4)) {
         uint32_t hash = kernel::R32(o + 0x10), type = kernel::R32(o + 0x18);
-        LOGI("feobj: %*s%08X t%u", depth * 2, "", hash, type);
+        // the data's place too: the groups are told apart by where they are drawn as well as by hash
+        uint32_t data = kernel::R32(o + 0x2C);
+        float x = 0, y = 0;
+        if (data && mem::IsCommitted(data + 0x23)) {
+            uint32_t bx = kernel::R32(data + 0x1C), by = kernel::R32(data + 0x20);
+            std::memcpy(&x, &bx, 4);
+            std::memcpy(&y, &by, 4);
+        }
+        LOGI("feobj: %*s%08X t%u %d,%d", depth * 2, "", hash, type, int(x), int(y));
         if (type == 5 && depth < 8) DumpObjects(kernel::R32(o + 0x64), depth + 1, budget);
     }
 }

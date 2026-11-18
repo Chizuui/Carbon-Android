@@ -1473,6 +1473,7 @@ bool VulkanBackend::CreateDevice() {
         dynamic_ = false;
     }
     feats_ = {};
+    feats_.robustBufferAccess = f2.features.robustBufferAccess;
     feats_.samplerAnisotropy = f2.features.samplerAnisotropy;
     feats_.fillModeNonSolid = f2.features.fillModeNonSolid;
     feats_.textureCompressionBC = f2.features.textureCompressionBC;
@@ -1984,7 +1985,7 @@ void VulkanBackend::WaitValue(uint64_t v) {
         std::lock_guard lock(fence_lock_);
         for (const Pending& p : pending_)
             if (p.value >= v) {
-                vkWaitForFences(dev_, 1, &p.fence, VK_TRUE, UINT64_MAX);
+                if (p.fence != VK_NULL_HANDLE) vkWaitForFences(dev_, 1, &p.fence, VK_TRUE, UINT64_MAX);
                 break;
             }
         PollFences();
@@ -2766,7 +2767,8 @@ VkSampler VulkanBackend::StageSampler(const State& s, int i, const DrawTextures&
     sd.addressModeV = Address(clamp && v == kTaddressWrap ? kTaddressClamp : v);
     sd.addressModeW = Address(t[kTssAddressW]);
     float limit = props_.limits.maxSamplerLodBias;
-    sd.mipLodBias = std::clamp(Bits(t[kTssMipLodBias]), -limit, limit);
+    float bias = Bits(t[kTssMipLodBias]);
+    sd.mipLodBias = std::isfinite(bias) ? std::clamp(bias, -limit, limit) : 0.0f;
     sd.minLod = std::min(float(t[kTssMaxMipLevel]), float(stages.levels[i] - 1));
     sd.maxLod = mip ? VK_LOD_CLAMP_NONE : sd.minLod;
     sd.borderColor = Border(t[kTssBorderColor]);
@@ -3185,7 +3187,7 @@ VkImageView VulkanBackend::BindGuestTexture(const State& s, int stage, const Tex
         }
     }
     Transition(t.img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    if (fi.depth) info.shadow = ShadowDepthKind(d.format);
+    if (fi.depth && t.img.depth) info.shadow = ShadowDepthKind(d.format);
     stages.fmt[stage] = t.fmt;
     stages.levels[stage] = t.levels;
     return t.img.view;
@@ -3289,8 +3291,12 @@ void VulkanBackend::KeyDepthStencil(const State& s, const Assembled& a, PsoKey& 
         k.spass = SimpleState(s, kMStencilPass);
     }
     if (a.topology == Topology::Triangles && SimpleState(s, kMSolidOffsetEnable)) {
-        k.zbias = int32_t(std::lround(Bits(SimpleState(s, kMDepthOffset)) * kDepth24Max / s.zscale));
-        k.zslope = Bits(SimpleState(s, kMSlopeScale)) * (draw_ds_ ? float(draw_ds_->w) / draw_ds_->gw : 1.0f);
+        float off = Bits(SimpleState(s, kMDepthOffset));
+        float zsc = s.zscale != 0.0f ? s.zscale : kDepth24Max;
+        float bias = off * kDepth24Max / zsc;
+        k.zbias = std::isfinite(bias) ? int32_t(std::lround(std::clamp(bias, -1e6f, 1e6f))) : 0;
+        float slope = Bits(SimpleState(s, kMSlopeScale)) * (draw_ds_ ? float(draw_ds_->w) / draw_ds_->gw : 1.0f);
+        k.zslope = std::isfinite(slope) ? slope : 0.0f;
     }
 }
 
@@ -3395,9 +3401,15 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
 
     // everything uploaded before the rendering: a full ring flushes
     VkDeviceSize need = 2 * kUboRange + 1024;
-    for (uint32_t i = 0; i < a.buffer_count; i++) need += a.buffers[i].bytes + 16;
-    need += VkDeviceSize(a.index_count) * 4 + 16;
-    if (need < kUploadSize / 4 && CurrentFrame().used + need > kUploadSize) Submit(true, false);
+    for (uint32_t i = 0; i < a.buffer_count; i++) {
+        VkDeviceSize b = std::max<uint32_t>(a.buffers[i].bytes, 4);
+        if (b <= kUploadSize / 4) need += b + 16;
+    }
+    if (a.index_count) {
+        VkDeviceSize ibytes = VkDeviceSize(a.index_count) * (a.index16 ? 2 : 4);
+        if (ibytes <= kUploadSize / 4) need += ibytes + 16;
+    }
+    if (CurrentFrame().used + need > kUploadSize) Submit(true, false);
     GuestExtent size;
     SurfaceSize(draw_rt_ ? s.rt : s.zs, size.w, size.h);
     DrawConstants c{};

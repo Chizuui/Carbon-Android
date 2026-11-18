@@ -274,7 +274,7 @@ bool RawReadable(const State& s, const Inputs& inputs) {
         HostElement he = HostFormat(in.type);
         uint32_t stride = StrideOf(s, inputs.layout, in);
         bool readable = he.format && stride && stride % kStrideAlign == 0 && in.offset < kElementOffsetEnd &&
-                        in.offset % std::min<uint32_t>(he.bytes, 4) == 0;
+                        in.offset % std::min<uint32_t>(he.bytes, 4) == 0 && in.offset + he.bytes <= stride;
         if (!readable) {
             LOG_FIRST(32, "vertex: converted on the CPU: v%d type %02X offset %u stride %u", inputs.regs[k], in.type,
                       in.offset, stride);
@@ -452,13 +452,14 @@ bool Assemble(const State& s, uint32_t prim, uint32_t start, uint32_t count, con
     // the vertex range the draw reads
     IndexBounds bounds = {0, count - 1};
     if (ip) bounds = IndexRange(ip, count);
+    if (ip && int64_t(bounds.first) + int32_t(s.base_vertex) < 0) return false;
     DrawRange d;
     d.prim = prim;
     d.start = start;
     d.count = count;
     d.ip = ip;
     d.first = bounds.first;
-    d.first_vertex = ip ? bounds.first + s.base_vertex : start;
+    d.first_vertex = ip ? uint32_t(int64_t(bounds.first) + int32_t(s.base_vertex)) : start;
     d.span = bounds.last - bounds.first + 1;
 
     int regs[16];

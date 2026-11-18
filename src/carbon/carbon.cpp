@@ -1,6 +1,7 @@
 // Need for Speed: Carbon boots on the host's XDK like Most Wanted does, but every hook in src/game is cut for Most Wanted's
 // addresses. Until Carbon's are found these are the calls the common code makes, doing nothing
 #include <android/log.h>
+#include <cctype>
 #include <cstring>
 #include <string>
 
@@ -154,34 +155,36 @@ constexpr uint32_t kGameFlowRacing = 6;
 // cFEng's instance: FEngine at its first field, the packages' list at +0xE4 (their next +8, name +0xC)
 constexpr uint32_t kCFEng = 0x46A7C8;
 
-// Returns true if name is any menu/dialog/options package (anything that is NOT racing HUD or song banner)
-bool IsMenuPackageName(const char* name) {
-    if (!name || *name == '\0') return false;
-    if (std::strstr(name, "HUD_") != nullptr) return false;
-    if (std::strstr(name, "EA_TRAX") != nullptr || std::strstr(name, "EA_Trax") != nullptr) return false;
+// Non-menu FEng overlays that stay open during driving (HUD, subtitles, notifications, flashers).
+bool StartsWithNoCase(const char* s, const char* prefix) {
+    if (!s) return false;
+    for (; *prefix; s++, prefix++) {
+        if (std::tolower(static_cast<unsigned char>(*s)) != std::tolower(static_cast<unsigned char>(*prefix)))
+            return false;
+    }
     return true;
 }
 
-// Directly check if ANY non-HUD package is currently active in FEngine.
-// When in race and paused or in ANY menu (Pause, Options, Audio, Gameplay, Controller, Video, Dialog):
-// this returns true, hiding the racing pad buttons immediately!
-bool IsPaused() {
-    if (!mem::IsCommitted(kCFEng)) return false;
-    uint32_t cfeng = kernel::R32(kCFEng);
-    uint32_t fe = (cfeng && mem::IsCommitted(cfeng)) ? kernel::R32(cfeng) : 0;
-    if (!fe || !mem::IsCommitted(fe + 0xE0)) return false;
-    int count = 0;
-    for (uint32_t p = kernel::R32(fe + 0xE0); p && count < 64 && mem::IsCommitted(p + 0xF);
-         p = kernel::R32(p + 4), count++) {
-        uint32_t name_ptr = kernel::R32(p + 0xC);
-        if (name_ptr && mem::IsCommitted(name_ptr)) {
-            const char* name = (const char*)kernel::HostPtr(name_ptr);
-            if (IsMenuPackageName(name)) {
-                return true;
-            }
-        }
+bool EqualsNoCase(const char* a, const char* b) {
+    if (!a) return false;
+    for (; *a || *b; a++, b++) {
+        if (std::tolower(static_cast<unsigned char>(*a)) != std::tolower(static_cast<unsigned char>(*b)))
+            return false;
     }
-    return false;
+    return true;
+}
+
+bool IsOverlayPackageName(const char* name) {
+    if (!name || *name == '\0') return false;
+    static constexpr const char* kPrefixes[] = {
+        "HUD_", "FESubtitler", "Chyron_IG", "FeChyron", "FLASHERS",
+        "Autosave_Overlay", "BUSTED_OVERLAY", "FeBlackScreen", "ScreenPrintf", "Loading",
+    };
+    for (const char* prefix : kPrefixes) {
+        if (StartsWithNoCase(name, prefix)) return true;
+    }
+    // EA_TRAX.fng / EA_Trax.fng are song banners, while EA_Trax_Jukebox.fng is a menu.
+    return EqualsNoCase(name, "EA_TRAX.fng") || EqualsNoCase(name, "EA_TRAX");
 }
 
 bool Racing() {
@@ -231,13 +234,11 @@ const char* OwnString(uint32_t hash) {
 constexpr uint32_t kMouseActive = 0x01, kFirstPackage = 0xE0, kInterface = 0x108;
 constexpr uint32_t kGetMouseInfoSlot = 0x44;
 constexpr uint32_t kPkgNext = 0x04, kPkgName = 0x0C, kControlMask = 0x20, kInputEnabled = 0x28;
-constexpr uint32_t kCurrentButton = 0x8C, kMouseObjects = 0xB0;
-constexpr uint32_t kObjectFlags = 0x1C, kMouseObject = 1u << 17;
-constexpr uint32_t kTestForIntersection = 0x138E70;
+constexpr uint32_t kCurrentButton = 0x8C;
 constexpr int kMaxPackages = 64;
 
 std::atomic<bool> g_menu{true};
-std::atomic<uint32_t> g_package{0};
+std::atomic<uint32_t> g_package{0}, g_current_button{0};
 std::atomic<int32_t> g_x{-2000}, g_y{-2000};
 std::atomic<bool> g_down{false};
 bool g_reported_down = false;
@@ -254,29 +255,9 @@ uint32_t FEngine() {
     return feng && mem::IsCommitted(feng) ? kernel::R32(feng) : 0;
 }
 
-uint32_t Bits(float f) {
-    uint32_t b;
-    std::memcpy(&b, &f, 4);
-    return b;
-}
-
-bool PackageNameStarts(uint32_t p, const char* prefix) {
+const char* PackageName(uint32_t p) {
     uint32_t name = p && mem::IsCommitted(p + kPkgName + 3) ? kernel::R32(p + kPkgName) : 0;
-    if (!name || !mem::IsCommitted(name)) return false;
-    size_t len = std::strlen(prefix);
-    return mem::IsCommitted(name + uint32_t(len)) &&
-           std::strncmp((const char*)kernel::HostPtr(name), prefix, len) == 0;
-}
-
-bool OnCurrentButton(X86Context& ctx, uint32_t p) {
-    uint32_t button = p && mem::IsCommitted(p + kCurrentButton + 3) ? kernel::R32(p + kCurrentButton) : 0;
-    if (!button || !mem::IsCommitted(button + kObjectFlags + 3)) return false;
-    if (kernel::R32(button + kObjectFlags) & kMouseObject) return false;
-    uint32_t saved[] = {ctx.eax, ctx.ecx, ctx.edx, ctx.ebx, ctx.esi, ctx.edi, ctx.ebp};
-    uint32_t hit = kernel::CallGuest(ctx, kTestForIntersection, {Bits(float(g_x)), Bits(float(g_y)), button}) & 0xFF;
-    ctx.eax = saved[0], ctx.ecx = saved[1], ctx.edx = saved[2], ctx.ebx = saved[3], ctx.esi = saved[4];
-    ctx.edi = saved[5], ctx.ebp = saved[6];
-    return hit != 0;
+    return name && mem::IsCommitted(name) ? (const char*)kernel::HostPtr(name) : nullptr;
 }
 
 void GetMouseInfo(X86Context& ctx, uint8_t*) {
@@ -289,15 +270,6 @@ void GetMouseInfo(X86Context& ctx, uint8_t*) {
     if (presses != seen) {
         seen = presses;
         hold = kHoldUpdates;
-        uint32_t p = g_package;
-        if (g_press_start) {
-            g_start_package = p;
-            g_accept_start = true;
-            g_accept_button = 0;
-        } else if (!g_tap_anywhere && p) {
-            g_accept_button = OnCurrentButton(ctx, p) ? kernel::R32(p + kCurrentButton) : 0;
-            g_accept_package = p;
-        }
     }
     bool down = g_down || hold > 0;
     g_reported_down = down;
@@ -318,6 +290,7 @@ void FeFrame() {
     uint32_t fe = FEngine();
     if (!fe) {
         g_package = 0;
+        g_current_button = 0;
         g_press_start = false;
         g_tap_anywhere = false;
         g_menu = true;
@@ -332,31 +305,42 @@ void FeFrame() {
             if (vtbl && mem::IsCommitted(slot + 3) && kernel::R32(slot) != thunk) kernel::W32(slot, thunk);
         }
     }
-    uint32_t mouse_pkg = 0, input_pkg = 0;
+    bool racing = Racing();
+    uint32_t pkg = 0;
     bool press_start = false;
     int n = 0;
     for (uint32_t p = mem::IsCommitted(fe + kFirstPackage + 3) ? kernel::R32(fe + kFirstPackage) : 0;
-         p && n < kMaxPackages && mem::IsCommitted(p + kMouseObjects + 3);
+         p && n < kMaxPackages && mem::IsCommitted(p + kCurrentButton + 3);
          p = kernel::R32(p + kPkgNext), n++) {
         if (!kernel::G<uint8_t>(p + kInputEnabled) || !(kernel::R32(p + kControlMask) & 1)) continue;
-        if (!input_pkg) input_pkg = p;
-        if (PackageNameStarts(p, "FePressStart")) {
-            input_pkg = p;
+        const char* name = PackageName(p);
+        if (racing && IsOverlayPackageName(name)) continue;
+        if (!pkg) pkg = p;
+        if (name && StartsWithNoCase(name, "FePressStart")) {
+            pkg = p;
             press_start = true;
         }
-        if (!mouse_pkg && int32_t(kernel::R32(p + kMouseObjects)) > 0) mouse_pkg = p;
     }
-    uint32_t pkg = mouse_pkg && !press_start ? mouse_pkg : input_pkg;
+    bool menu = !racing || pkg != 0;
     int frames = g_mouse_frames;
     if (g_down) frames = kMouseFrames;
     else if (frames > 0) frames--;
     g_mouse_frames = frames;
     if (mem::IsCommitted(fe + kMouseActive))
-        kernel::G<uint8_t>(fe + kMouseActive) = (pkg != 0 && frames > 0) ? 1 : 0;
-    g_package = pkg;
-    g_press_start = press_start;
-    g_tap_anywhere = pkg && !press_start && mouse_pkg == 0 && kernel::R32(pkg + kCurrentButton) == 0;
-    g_menu = !Racing() || IsPaused();
+        kernel::G<uint8_t>(fe + kMouseActive) = (menu && pkg != 0 && frames > 0) ? 1 : 0;
+    static uint32_t last_race_menu = 0;
+    if (racing && pkg != last_race_menu) {
+        last_race_menu = pkg;
+        if (pkg) LOGR("fepkg: race menu %s", PackageName(pkg) ? PackageName(pkg) : "?");
+        else LOGR("fepkg: race resume");
+    } else if (!racing) {
+        last_race_menu = 0;
+    }
+    g_package = menu ? pkg : 0;
+    g_current_button = (menu && pkg && mem::IsCommitted(pkg + kCurrentButton + 3)) ? kernel::R32(pkg + kCurrentButton) : 0;
+    g_press_start = menu && press_start;
+    g_tap_anywhere = menu && pkg != 0 && !press_start;
+    g_menu = menu;
 }
 
 // FeMenuShown: true whenever we are not in a race OR when paused, so the pad buttons hide
@@ -390,12 +374,16 @@ void FeTouch(bool down, float u, float v) {
     g_y = int32_t((v - 0.5f) * 480.0f);
     if (down && !g_down) {
         g_presses++;
+        uint32_t p = g_package.load();
         if (g_press_start) {
-            g_start_package = g_package.load();
+            g_start_package = p;
             g_accept_start = true;
-        } else if (g_tap_anywhere) {
-            g_accept_package = g_package.load();
-            g_accept_button = kAnywhere;
+            g_accept_package = 0;
+            g_accept_button = 0;
+        } else if (g_tap_anywhere && p) {
+            uint32_t btn = g_current_button.load();
+            g_accept_package = p;
+            g_accept_button = btn ? btn : kAnywhere;
         }
     }
     g_down = down;
@@ -406,7 +394,8 @@ bool FeTakeAccept() {
     uint32_t p = g_accept_package.exchange(0), button = g_accept_button.exchange(0);
     if (!button || p != g_package || !g_menu || !mem::IsCommitted(p + kInputEnabled)) return false;
     if (!kernel::G<uint8_t>(p + kInputEnabled)) return false;
-    return button == kAnywhere || (mem::IsCommitted(p + kCurrentButton + 3) && kernel::R32(p + kCurrentButton) == button);
+    uint32_t cur = g_current_button.load();
+    return button == kAnywhere ? (cur == 0) : (cur == button);
 }
 
 bool FeTakeStart() {
@@ -579,24 +568,25 @@ static void DumpObjects(uint32_t o, int depth, int& budget) {
         if (type == 5 && depth < 8) DumpObjects(kernel::R32(o + 0x64), depth + 1, budget);
     }
 }
-static void DumpOpenPackages() {
-    static uint32_t dumped[32] = {};
+static void DumpOpenPackages(bool dump_objects) {
+    static uint32_t dumped[64] = {};
     static int n = 0;
     if (!mem::IsCommitted(kCFEng)) return;
     uint32_t cfeng = kernel::R32(kCFEng);
     uint32_t fe = cfeng && mem::IsCommitted(cfeng) ? kernel::R32(cfeng) : 0;
     int count = 0;
-    for (uint32_t p = fe && mem::IsCommitted(fe + 0xE4) ? kernel::R32(fe + 0xE4) : 0; p && count < 64;
-         p = kernel::R32(p + 8), count++) {
-        if (!mem::IsCommitted(p + 0xC)) continue;
+    for (uint32_t p = fe && mem::IsCommitted(fe + 0xE0) ? kernel::R32(fe + 0xE0) : 0;
+         p && count < 64 && mem::IsCommitted(p + 0xC + 3); p = kernel::R32(p + 4), count++) {
         uint32_t name = kernel::R32(p + 0xC);
         bool seen = false;
         for (int i = 0; i < n; i++) seen = seen || dumped[i] == p;
         if (seen) continue;
-        if (n < 32) dumped[n++] = p;
-        int budget = 400;
+        if (n < 64) dumped[n++] = p;
         LOGR("fepkg: open %s", name && mem::IsCommitted(name) ? (const char*)kernel::HostPtr(name) : "?");
-        if (name && mem::IsCommitted(name)) DumpObjects(kernel::R32(p + 0x4C), 1, budget);
+        if (dump_objects && name && mem::IsCommitted(name)) {
+            int budget = 400;
+            DumpObjects(kernel::R32(p + 0x4C), 1, budget);
+        }
     }
 }
 
@@ -607,9 +597,9 @@ static void DumpRaceHud() {
     uint32_t cfeng = kernel::R32(::game::kCFEng);
     uint32_t fe = cfeng && mem::IsCommitted(cfeng) ? kernel::R32(cfeng) : 0;
     int count = 0;
-    for (uint32_t p = fe && mem::IsCommitted(fe + 0xE4) ? kernel::R32(fe + 0xE4) : 0; p && count < 64;
-         p = kernel::R32(p + 8), count++) {
-        uint32_t name = mem::IsCommitted(p + 0xC) ? kernel::R32(p + 0xC) : 0;
+    for (uint32_t p = fe && mem::IsCommitted(fe + 0xE0) ? kernel::R32(fe + 0xE0) : 0;
+         p && count < 64 && mem::IsCommitted(p + 0xC + 3); p = kernel::R32(p + 4), count++) {
+        uint32_t name = kernel::R32(p + 0xC);
         if (!name || !mem::IsCommitted(name)) continue;
         const char* s = (const char*)kernel::HostPtr(name);
         if (std::strncmp(s, "HUD_", 4) != 0) continue;
@@ -622,13 +612,11 @@ static void DumpRaceHud() {
 
 }  // namespace
 
-// called at each present: the open packages once, the HUD for as long as it is up
+// called at each present: each newly opened package name, object tree on the first pass, and the race HUD once
 void DumpPackages() {
-    static bool packages = false;
-    if (!packages) {
-        packages = true;
-        DumpOpenPackages();
-    }
+    static bool first = true;
+    DumpOpenPackages(first);
+    first = false;
     DumpRaceHud();
 }
 

@@ -321,6 +321,8 @@ bool FeTakeAccept() {
     return button == kAnywhere || kernel::R32(p + kCurrentButton) == button;
 }
 
+bool FeTakeStart() { return false; }
+
 // FEng's screen has its origin in the middle of the frame (MC_Main_GC.fng's OK, 39 under the middle) and is 480 high.
 // Its hit tests (FEngTestForIntersection) take it as 480 times the frame's aspect wide, in square pixels: with the
 // console's widescreen flag the front end lays out to that width (WidenAspect's), and without it (a frame under 3:2)

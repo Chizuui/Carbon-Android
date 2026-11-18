@@ -34,14 +34,26 @@ void WidenAspect() {
 }
 
 // Carbon render switches:
-// - 0x3F96B3: Particles - Main View switch (checked at 0x112A63)
+// - 0x3F96B3: Particles - Main View switch (checked at 0x1125E3, 0x112A63)
 // - 0x3F96BA: Car Reflections (EnvMap) switch (checked at 0x1121BB)
-// - 0x492F8C: Road Reflection active flag (checked at 0x111FF0)
+// - 0x3F972C: Road Reflection master switch (dword, checked at 0x111FCC before eView[4..5] loop)
+// - 0x4084FC: Car underbody shadow switch (dword, checked at 0x29A6BC before sub_0027F640)
+// - 0x46D7A0: Native SkipMovies flag (dword, checked at 0x14C246 and 0x130239)
 // The world bloom switch (0x401D14, read at 0x112AF9) is left to the game: with it written 0 the scene broke
 // (map off its track, crashes). BLOOM off is native/vulkan.cpp's skip of the glow draw
 constexpr uint32_t kParticleSwitch = 0x3F96B3;
 constexpr uint32_t kEnvMapSwitch = 0x3F96BA;
-constexpr uint32_t kRoadReflectionSwitch = 0x492F8C;
+constexpr uint32_t kRoadReflectionSwitch = 0x3F972C;
+constexpr uint32_t kRoadReflectionView = 0x492F80;  // eView[4], RenderTarget pointer at +0x50 (0x492FD0)
+constexpr uint32_t kEnvMapFace0Target = 0x493750;   // EnvMap face 0 RenderTarget pointer (checked at 0x1121E4)
+constexpr uint32_t kCarShadowSwitch = 0x4084FC;
+constexpr uint32_t kSkipMovies = 0x46D7A0;
+
+// The colour data of a RenderTarget's D3DSurface ([target + 8] -> [surface + 4] physical addr).
+uint32_t TargetData(uint32_t target) {
+    uint32_t surface = (target && mem::IsCommitted(target + 8)) ? kernel::R32(target + 8) : 0;
+    return (surface && mem::IsCommitted(surface + 4)) ? mem::VirtualFromPhysical(kernel::R32(surface + 4)) : 0;
+}
 
 void ApplyGraphicsSwitches() {
     const Options& o = Opt();
@@ -55,8 +67,19 @@ void ApplyGraphicsSwitches() {
         kernel::G<uint8_t>(kEnvMapSwitch) = (frame++ % every == 0) ? 1 : 0;
     }
     if (mem::IsCommitted(kRoadReflectionSwitch)) {
-        kernel::G<uint8_t>(kRoadReflectionSwitch) = o.road_reflections ? 1 : 0;
+        kernel::W32(kRoadReflectionSwitch, o.road_reflections ? 1u : 0u);
     }
+    if (mem::IsCommitted(kCarShadowSwitch)) {
+        kernel::W32(kCarShadowSwitch, o.shadows ? 1u : 0u);
+    }
+    if (mem::IsCommitted(kSkipMovies)) {
+        kernel::W32(kSkipMovies, o.skip_movies ? 1u : 0u);
+    }
+    // Expose road reflection and envmap targets so Vulkan binds black when toggled OFF instead of stale frames.
+    g_road_reflection = mem::IsCommitted(kRoadReflectionView + 0x50)
+                            ? TargetData(kernel::R32(kRoadReflectionView + 0x50))
+                            : 0;
+    g_env_cube = mem::IsCommitted(kEnvMapFace0Target) ? TargetData(kernel::R32(kEnvMapFace0Target)) : 0;
 }
 
 // Carbon cheats:
@@ -77,19 +100,20 @@ void ApplyCheats() {
         kernel::G<uint8_t>(kInfiniteSpeedbreaker) = o.cheat_speedbreaker ? 1 : 0;
     // the career's cash, [[[0x46A7CC] + 0xD4]] + 0x24310 (what the cash setter 0x9D3F0 adds to; the shop and the
     // HUD read it): held at the cheat's amount while on, and given back as it was when turned off
-    static bool cash_held = false;
+    static uint32_t cash_career = 0;
     static uint32_t cash_saved = 0;
     uint32_t sys = mem::IsCommitted(kCareerRoot) ? kernel::R32(kCareerRoot) : 0;
     uint32_t list = sys && mem::IsCommitted(sys + 0xD4) ? kernel::R32(sys + 0xD4) : 0;
     uint32_t career = list && mem::IsCommitted(list) ? kernel::R32(list) : 0;
-    if (career && mem::IsCommitted(career + kCashField)) {
+    if (cash_career && cash_career != career) cash_career = 0;
+    if (career >= 0x10000 && mem::IsCommitted(career + kCashField)) {
         if (o.cheat_cash) {
-            if (!cash_held) cash_saved = kernel::R32(career + kCashField);
-            cash_held = true;
+            if (!cash_career) cash_saved = kernel::R32(career + kCashField);
+            cash_career = career;
             kernel::W32(career + kCashField, 9999999);
-        } else if (cash_held) {
+        } else if (cash_career) {
             kernel::W32(career + kCashField, cash_saved);
-            cash_held = false;
+            cash_career = 0;
         }
     }
     // the byte 28 unlock tests or in (0x2C6A60 answers true at once, the thing lists' lock tests 0x8A500, ...);
@@ -145,10 +169,10 @@ bool IsPaused() {
     if (!mem::IsCommitted(kCFEng)) return false;
     uint32_t cfeng = kernel::R32(kCFEng);
     uint32_t fe = (cfeng && mem::IsCommitted(cfeng)) ? kernel::R32(cfeng) : 0;
-    if (!fe || !mem::IsCommitted(fe + 0xE4)) return false;
+    if (!fe || !mem::IsCommitted(fe + 0xE0)) return false;
     int count = 0;
-    for (uint32_t p = kernel::R32(fe + 0xE4); p && count < 32; p = kernel::R32(p + 8), count++) {
-        if (!mem::IsCommitted(p + 0xC)) continue;
+    for (uint32_t p = kernel::R32(fe + 0xE0); p && count < 64 && mem::IsCommitted(p + 0xF);
+         p = kernel::R32(p + 4), count++) {
         uint32_t name_ptr = kernel::R32(p + 0xC);
         if (name_ptr && mem::IsCommitted(name_ptr)) {
             const char* name = (const char*)kernel::HostPtr(name_ptr);
@@ -201,19 +225,59 @@ const char* OwnString(uint32_t hash) {
 }
 
 // FEng Touch & Mouse Hook for Carbon:
-// 0x46A8E4: FEGameInterface pointer (vtable slot +0x44 is GetMouseInfo)
-// 0x46A53C: active FEPackage pointer (byte +1 has bit 0x80 for mouse enabled)
-constexpr uint32_t kFEInterfacePtr = 0x46A8E4;
-constexpr uint32_t kFEActivePackage = 0x46A53C;
+// FEngine ([kCFEng]): +0x01 bMouseActive, +0xE0 first FEPackage (+0x04 next), +0x108 FEGameInterface (vtable 0x3B0000,
+// slot +0x44 is GetMouseInfo, slot +0x48 calls 0x138E70 TestForIntersection). Never hook 0x46A8E4: that is
+// cFrontendDatabase (vtable 0x3C4130), whose +0x44 (0x1233E0) is called with 0 as arg 1 when entering Career/CarSelect.
+constexpr uint32_t kMouseActive = 0x01, kFirstPackage = 0xE0, kInterface = 0x108;
 constexpr uint32_t kGetMouseInfoSlot = 0x44;
+constexpr uint32_t kPkgNext = 0x04, kPkgName = 0x0C, kControlMask = 0x20, kInputEnabled = 0x28;
+constexpr uint32_t kCurrentButton = 0x8C, kMouseObjects = 0xB0;
+constexpr uint32_t kObjectFlags = 0x1C, kMouseObject = 1u << 17;
+constexpr uint32_t kTestForIntersection = 0x138E70;
+constexpr int kMaxPackages = 64;
 
-static std::atomic<bool> g_tap_accept{false};
 std::atomic<bool> g_menu{true};
+std::atomic<uint32_t> g_package{0};
 std::atomic<int32_t> g_x{-2000}, g_y{-2000};
 std::atomic<bool> g_down{false};
+bool g_reported_down = false;
 std::atomic<uint32_t> g_presses{0};
 constexpr int kMouseFrames = 30;
 std::atomic<int> g_mouse_frames{0};
+std::atomic<uint32_t> g_accept_package{0}, g_accept_button{0}, g_start_package{0};
+std::atomic<bool> g_tap_anywhere{false}, g_press_start{false}, g_accept_start{false};
+constexpr uint32_t kAnywhere = 1;
+
+uint32_t FEngine() {
+    if (!mem::IsCommitted(kCFEng)) return 0;
+    uint32_t feng = kernel::R32(kCFEng);
+    return feng && mem::IsCommitted(feng) ? kernel::R32(feng) : 0;
+}
+
+uint32_t Bits(float f) {
+    uint32_t b;
+    std::memcpy(&b, &f, 4);
+    return b;
+}
+
+bool PackageNameStarts(uint32_t p, const char* prefix) {
+    uint32_t name = p && mem::IsCommitted(p + kPkgName + 3) ? kernel::R32(p + kPkgName) : 0;
+    if (!name || !mem::IsCommitted(name)) return false;
+    size_t len = std::strlen(prefix);
+    return mem::IsCommitted(name + uint32_t(len)) &&
+           std::strncmp((const char*)kernel::HostPtr(name), prefix, len) == 0;
+}
+
+bool OnCurrentButton(X86Context& ctx, uint32_t p) {
+    uint32_t button = p && mem::IsCommitted(p + kCurrentButton + 3) ? kernel::R32(p + kCurrentButton) : 0;
+    if (!button || !mem::IsCommitted(button + kObjectFlags + 3)) return false;
+    if (kernel::R32(button + kObjectFlags) & kMouseObject) return false;
+    uint32_t saved[] = {ctx.eax, ctx.ecx, ctx.edx, ctx.ebx, ctx.esi, ctx.edi, ctx.ebp};
+    uint32_t hit = kernel::CallGuest(ctx, kTestForIntersection, {Bits(float(g_x)), Bits(float(g_y)), button}) & 0xFF;
+    ctx.eax = saved[0], ctx.ecx = saved[1], ctx.edx = saved[2], ctx.ebx = saved[3], ctx.esi = saved[4];
+    ctx.edi = saved[5], ctx.ebp = saved[6];
+    return hit != 0;
+}
 
 void GetMouseInfo(X86Context& ctx, uint8_t*) {
     constexpr int kHoldUpdates = 2, kStayUpdates = 4;
@@ -225,57 +289,87 @@ void GetMouseInfo(X86Context& ctx, uint8_t*) {
     if (presses != seen) {
         seen = presses;
         hold = kHoldUpdates;
+        uint32_t p = g_package;
+        if (g_press_start) {
+            g_start_package = p;
+            g_accept_start = true;
+            g_accept_button = 0;
+        } else if (!g_tap_anywhere && p) {
+            g_accept_button = OnCurrentButton(ctx, p) ? kernel::R32(p + kCurrentButton) : 0;
+            g_accept_package = p;
+        }
     }
     bool down = g_down || hold > 0;
+    g_reported_down = down;
     if (hold > 0) hold--;
     if (down) stay = kStayUpdates;
     else if (stay > 0) stay--;
     bool here = down || stay > 0;
-    kernel::W16(info, uint16_t(here ? int16_t(g_x.load()) : kAway));
-    kernel::W16(info + 2, uint16_t(here ? int16_t(g_y.load()) : kAway));
-    kernel::W16(info + 4, 0);
-    kernel::W16(info + 6, down ? 1 : 0);  // Left button
+    if (info && mem::IsCommitted(info + 7)) {
+        kernel::W16(info, uint16_t(here ? int16_t(g_x.load()) : kAway));
+        kernel::W16(info + 2, uint16_t(here ? int16_t(g_y.load()) : kAway));
+        kernel::W16(info + 4, 0);
+        kernel::W16(info + 6, down ? 1 : 0);  // Left button
+    }
     kernel::Return(ctx, 0, 1);
 }
 
 void FeFrame() {
-    if (!mem::IsCommitted(kFEInterfacePtr)) {
-        g_menu = false;
+    uint32_t fe = FEngine();
+    if (!fe) {
+        g_package = 0;
+        g_press_start = false;
+        g_tap_anywhere = false;
+        g_menu = true;
         return;
     }
-    uint32_t iface = kernel::R32(kFEInterfacePtr);
-    if (iface && mem::IsCommitted(iface)) {
-        uint32_t vtbl = kernel::R32(iface);
-        if (vtbl && mem::IsCommitted(vtbl)) {
-            static const uint32_t thunk = dispatch::HostThunk(GetMouseInfo);
+    static const uint32_t thunk = dispatch::HostThunk(GetMouseInfo);
+    if (mem::IsCommitted(fe + kInterface + 3)) {
+        uint32_t iface = kernel::R32(fe + kInterface);
+        if (iface && mem::IsCommitted(iface + 3)) {
+            uint32_t vtbl = kernel::R32(iface);
             uint32_t slot = vtbl + kGetMouseInfoSlot;
-            if (kernel::R32(slot) != thunk) kernel::W32(slot, thunk);
+            if (vtbl && mem::IsCommitted(slot + 3) && kernel::R32(slot) != thunk) kernel::W32(slot, thunk);
         }
     }
-    uint32_t pkg = mem::IsCommitted(kFEActivePackage) ? kernel::R32(kFEActivePackage) : 0;
-    bool menu = pkg != 0;
-    g_menu = menu;
-    int frames = g_mouse_frames.load();
-    if (frames > 0) g_mouse_frames.fetch_sub(1);
-    if (pkg && mem::IsCommitted(pkg)) {
-        // Enable mouse flag bit 0x80 on the active package
-        kernel::G<uint8_t>(pkg + 1) |= 0x80;
+    uint32_t mouse_pkg = 0, input_pkg = 0;
+    bool press_start = false;
+    int n = 0;
+    for (uint32_t p = mem::IsCommitted(fe + kFirstPackage + 3) ? kernel::R32(fe + kFirstPackage) : 0;
+         p && n < kMaxPackages && mem::IsCommitted(p + kMouseObjects + 3);
+         p = kernel::R32(p + kPkgNext), n++) {
+        if (!kernel::G<uint8_t>(p + kInputEnabled) || !(kernel::R32(p + kControlMask) & 1)) continue;
+        if (!input_pkg) input_pkg = p;
+        if (PackageNameStarts(p, "FePressStart")) {
+            input_pkg = p;
+            press_start = true;
+        }
+        if (!mouse_pkg && int32_t(kernel::R32(p + kMouseObjects)) > 0) mouse_pkg = p;
     }
+    uint32_t pkg = mouse_pkg && !press_start ? mouse_pkg : input_pkg;
+    int frames = g_mouse_frames;
+    if (g_down) frames = kMouseFrames;
+    else if (frames > 0) frames--;
+    g_mouse_frames = frames;
+    if (mem::IsCommitted(fe + kMouseActive))
+        kernel::G<uint8_t>(fe + kMouseActive) = (pkg != 0 && frames > 0) ? 1 : 0;
+    g_package = pkg;
+    g_press_start = press_start;
+    g_tap_anywhere = pkg && !press_start && mouse_pkg == 0 && kernel::R32(pkg + kCurrentButton) == 0;
+    g_menu = !Racing() || IsPaused();
 }
 
 // FeMenuShown: true whenever we are not in a race OR when paused, so the pad buttons hide
 // and give way to menu navigation (pills in the corner, swipe, tap anywhere)
 bool FeMenuShown() {
-    if (!Racing()) return true;
-    return IsPaused();
+    return g_menu.load();
 }
 
-bool FeMouseDown() { return g_down.load(); }
+bool FeMouseDown() { return g_reported_down; }
 bool FeFinger(float& x, float& y) {
-    if (!g_down) return false;
     x = float(g_x.load());
     y = float(g_y.load());
-    return true;
+    return g_down;
 }
 
 // When in a menu, every pad button is a pill on the left of the screen: the screens' own prompts (Y sell, X modify,
@@ -296,17 +390,30 @@ void FeTouch(bool down, float u, float v) {
     g_y = int32_t((v - 0.5f) * 480.0f);
     if (down && !g_down) {
         g_presses++;
-        if (FeMenuShown()) {
-            g_tap_accept.store(true);
+        if (g_press_start) {
+            g_start_package = g_package.load();
+            g_accept_start = true;
+        } else if (g_tap_anywhere) {
+            g_accept_package = g_package.load();
+            g_accept_button = kAnywhere;
         }
     }
     g_down = down;
     g_mouse_frames = kMouseFrames;
 }
 
-
 bool FeTakeAccept() {
-    return g_tap_accept.exchange(false);
+    uint32_t p = g_accept_package.exchange(0), button = g_accept_button.exchange(0);
+    if (!button || p != g_package || !g_menu || !mem::IsCommitted(p + kInputEnabled)) return false;
+    if (!kernel::G<uint8_t>(p + kInputEnabled)) return false;
+    return button == kAnywhere || (mem::IsCommitted(p + kCurrentButton + 3) && kernel::R32(p + kCurrentButton) == button);
+}
+
+bool FeTakeStart() {
+    uint32_t p = g_start_package.exchange(0);
+    bool start = g_accept_start.exchange(false);
+    if (!start || !p || p != g_package || !g_press_start) return false;
+    return mem::IsCommitted(p + kInputEnabled) && kernel::G<uint8_t>(p + kInputEnabled) != 0;
 }
 
 bool LanguageAvailable(const std::string& code) { return code == "int" || code == "ind"; }
@@ -359,16 +466,15 @@ X86_FUNC(sub_0011FAB0) {
     __imp__sub_0011FAB0(ctx, base);
 }
 
-// Coronas / Headlight Flares in Carbon:
-// - sub_00108690: draws Coronas and Headlight Flares
-// - sub_0010EC90: "eRenderLightFlares" pass (draws street light flares and neon light trails!)
-// Both use cdecl convention without arguments on return (plain 'ret').
-// Bypassing both completely eliminates the giant green/white neon circles and connecting trails!
+// Screen Raindrops in Carbon: sub_00108690 ("Rain Drop" pass, cdecl, 1 arg, plain ret).
 X86_EXTERN_FUNC(__imp__sub_00108690);
 X86_FUNC(sub_00108690) {
+    if (game::Opt().rain_drops) return __imp__sub_00108690(ctx, base);
     ctx.esp += 4;
 }
 
+// Light Flares in Carbon: sub_0010EC90 ("eRenderLightFlares" pass, cdecl/0-arg, plain ret).
+// Bypassed to eliminate the giant green/white neon circles and connecting trails on Vulkan.
 X86_EXTERN_FUNC(__imp__sub_0010EC90);
 X86_FUNC(sub_0010EC90) {
     ctx.esp += 4;

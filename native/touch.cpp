@@ -930,6 +930,7 @@ void FeSwipe(const Finger& f) {
         g_fe_accept_at = NowMs() + kFeAcceptMs;
         return;
     }
+    game::FeTakeStart();
     game::FeTakeAccept();  // a swipe accepts nothing
     int steps = std::clamp(int(along / (kSwipeStep * h) + 0.5f), 1, kMaxSwipeSteps);
     int dpad = std::fabs(dx) > std::fabs(dy) ? (dx < 0 ? 3 : 2) : (dy < 0 ? 1 : 0);  // up down left right
@@ -1296,7 +1297,8 @@ void Apply(int port, input::Pad& pad) {
     }
     if (g_fe_accept_at && NowMs() >= g_fe_accept_at) {
         g_fe_accept_at = 0;
-        if (game::FeTakeAccept()) FeQueuePresses(kAnalogA, 1);
+        if (game::FeTakeStart()) FeQueuePresses(input::kStart, 1);
+        else if (game::FeTakeAccept()) FeQueuePresses(kAnalogA, 1);
     }
     if (int p = FeQueuePress(); p >= 0) {
         used = true;

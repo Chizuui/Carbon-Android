@@ -26,8 +26,20 @@ namespace game {
 // 0x3F98E0: float width transform (853.0f), read by front-end and HUD transform (0x10F094, 0x111749)
 constexpr uint32_t kVideoFlags = 0x45D294, kWideWidth = 0x3F98E0;
 
+// Check that an entire guest byte range [va, va + size) is non-null and backed by committed pages.
+bool IsCommittedRange(uint32_t va, uint32_t size) {
+    if (va < 0x10000 || !size) return false;
+    uint64_t end = uint64_t(va) + size - 1;
+    if (end > 0xFFFFFFFFull) return false;
+    for (uint64_t p = va & ~0xFFFull; p <= (end & ~0xFFFull); p += 0x1000) {
+        if (!mem::IsCommitted(uint32_t(p))) return false;
+    }
+    return true;
+}
+
 void WidenAspect() {
     if (!mem::IsCommitted(kVideoFlags) || !(kernel::G<uint8_t>(kVideoFlags) & 1)) return;
+    if (!IsCommittedRange(kWideWidth, 4)) return;
     float w = 480.0f * Aspect();
     uint32_t bits;
     std::memcpy(&bits, &w, 4);
@@ -52,8 +64,8 @@ constexpr uint32_t kSkipMovies = 0x46D7A0;
 
 // The colour data of a RenderTarget's D3DSurface ([target + 8] -> [surface + 4] physical addr).
 uint32_t TargetData(uint32_t target) {
-    uint32_t surface = (target && mem::IsCommitted(target + 8)) ? kernel::R32(target + 8) : 0;
-    return (surface && mem::IsCommitted(surface + 4)) ? mem::VirtualFromPhysical(kernel::R32(surface + 4)) : 0;
+    uint32_t surface = IsCommittedRange(target + 8, 4) ? kernel::R32(target + 8) : 0;
+    return IsCommittedRange(surface + 4, 4) ? mem::VirtualFromPhysical(kernel::R32(surface + 4)) : 0;
 }
 
 void ApplyGraphicsSwitches() {
@@ -67,20 +79,20 @@ void ApplyGraphicsSwitches() {
         uint32_t every = rate < 3 ? 1u << rate : 512;
         kernel::G<uint8_t>(kEnvMapSwitch) = (frame++ % every == 0) ? 1 : 0;
     }
-    if (mem::IsCommitted(kRoadReflectionSwitch)) {
+    if (IsCommittedRange(kRoadReflectionSwitch, 4)) {
         kernel::W32(kRoadReflectionSwitch, o.road_reflections ? 1u : 0u);
     }
-    if (mem::IsCommitted(kCarShadowSwitch)) {
+    if (IsCommittedRange(kCarShadowSwitch, 4)) {
         kernel::W32(kCarShadowSwitch, o.shadows ? 1u : 0u);
     }
-    if (mem::IsCommitted(kSkipMovies)) {
+    if (IsCommittedRange(kSkipMovies, 4)) {
         kernel::W32(kSkipMovies, o.skip_movies ? 1u : 0u);
     }
     // Expose road reflection and envmap targets so Vulkan binds black when toggled OFF instead of stale frames.
-    g_road_reflection = mem::IsCommitted(kRoadReflectionView + 0x50)
+    g_road_reflection = IsCommittedRange(kRoadReflectionView + 0x50, 4)
                             ? TargetData(kernel::R32(kRoadReflectionView + 0x50))
                             : 0;
-    g_env_cube = mem::IsCommitted(kEnvMapFace0Target) ? TargetData(kernel::R32(kEnvMapFace0Target)) : 0;
+    g_env_cube = IsCommittedRange(kEnvMapFace0Target, 4) ? TargetData(kernel::R32(kEnvMapFace0Target)) : 0;
 }
 
 // Carbon cheats:
@@ -103,11 +115,13 @@ void ApplyCheats() {
     // HUD read it): held at the cheat's amount while on, and given back as it was when turned off
     static uint32_t cash_career = 0;
     static uint32_t cash_saved = 0;
-    uint32_t sys = mem::IsCommitted(kCareerRoot) ? kernel::R32(kCareerRoot) : 0;
-    uint32_t list = sys && mem::IsCommitted(sys + 0xD4) ? kernel::R32(sys + 0xD4) : 0;
-    uint32_t career = list && mem::IsCommitted(list) ? kernel::R32(list) : 0;
+    uint32_t sys = IsCommittedRange(kCareerRoot, 4) ? kernel::R32(kCareerRoot) : 0;
+    // [sys + 0xD4] is the career pointer array and [sys + 0xD8] is its element count (sub_0011B550).
+    uint32_t count = IsCommittedRange(sys + 0xD8, 4) ? kernel::R32(sys + 0xD8) : 0;
+    uint32_t list = (count > 0 && IsCommittedRange(sys + 0xD4, 4)) ? kernel::R32(sys + 0xD4) : 0;
+    uint32_t career = IsCommittedRange(list, 4) ? kernel::R32(list) : 0;
     if (cash_career && cash_career != career) cash_career = 0;
-    if (career >= 0x10000 && mem::IsCommitted(career + kCashField)) {
+    if (IsCommittedRange(career + kCashField, 4)) {
         if (o.cheat_cash) {
             if (!cash_career) cash_saved = kernel::R32(career + kCashField);
             cash_career = career;
@@ -136,8 +150,8 @@ void ApplyCheats() {
     // its spawn check (0x1B810) reads. Written only while on and once more when turned off, so the game's own
     // use of it is left alone
     static bool held = false;
-    uint32_t mgr = mem::IsCommitted(kCopManager) ? kernel::R32(kCopManager) : 0;
-    if (mgr && mem::IsCommitted(mgr + kNoNewCops)) {
+    uint32_t mgr = IsCommittedRange(kCopManager, 4) ? kernel::R32(kCopManager) : 0;
+    if (mgr >= 0x10000 && mem::IsCommitted(mgr + kNoNewCops)) {
         if (o.cheat_no_police) kernel::G<uint8_t>(mgr + kNoNewCops) = 1;
         else if (held) kernel::G<uint8_t>(mgr + kNoNewCops) = 0;
         held = o.cheat_no_police;
@@ -546,6 +560,113 @@ X86_FUNC(sub_002EFCB4) {
     __imp__sub_002EFCB4(ctx, base);
 }
 
+// Guard Career/Frontend car spawn (0x242FD0): if 0x1B58 holds 0/-1 or a handle missing from Career[0]+0x234,
+// fall back to 0x1B60 or the first valid car in Career[0]+0x234 before 0x2432F5 dereferences [esi+0x08].
+X86_EXTERN_FUNC(sub_0007DD00);
+X86_EXTERN_FUNC(sub_0007DD50);
+X86_EXTERN_FUNC(__imp__sub_00242FD0);
+
+static uint32_t QueryFeVar(const X86Context& base_ctx, uint8_t* base, uint32_t id, uint32_t idx, uint32_t def_val) {
+    X86Context sc = base_ctx;
+    uint32_t out_va = sc.esp - 16u;
+    if (!game::IsCommittedRange(out_va - 0x400u, 0x410u)) return def_val;
+    kernel::W32(out_va, def_val);
+    sc.esp = out_va;
+    sc.ecx = 0x456830u;
+    auto push32 = [&](uint32_t v) {
+        sc.esp -= 4u;
+        kernel::W32(sc.esp, v);
+    };
+    push32(0xFFFFFFFFu);
+    push32(0xFFFFFFFFu);
+    push32(idx);
+    push32(out_va);
+    push32(id);
+    push32(0u);
+    sub_0007DD00(sc, base);
+    return kernel::R32(out_va);
+}
+
+static void SetFeVar(const X86Context& base_ctx, uint8_t* base, uint32_t id, uint32_t val, uint32_t idx) {
+    X86Context sc = base_ctx;
+    sc.esp -= 16u;
+    if (!game::IsCommittedRange(sc.esp - 0x400u, 0x400u)) return;
+    sc.ecx = 0x456830u;
+    auto push32 = [&](uint32_t v) {
+        sc.esp -= 4u;
+        kernel::W32(sc.esp, v);
+    };
+    push32(0xFFFFFFFFu);
+    push32(0xFFFFFFFFu);
+    push32(idx);
+    push32(val);
+    push32(id);
+    push32(0u);
+    sub_0007DD50(sc, base);
+}
+
+static bool IsKnownCarType(uint32_t car_type) {
+    if (!car_type || !game::IsCommittedRange(0x46D920u, 4)) return false;
+    uint32_t n = kernel::R32(0x46D920u);
+    for (int i = 0; i < 512 && game::IsCommittedRange(n, 12); i++) {
+        if (kernel::R32(n) == car_type) return true;
+        n = kernel::R32(n + 8u);
+    }
+    return false;
+}
+
+static uint32_t FindCarSlotInDb(uint32_t car_db, uint32_t handle) {
+    if (!game::IsCommittedRange(car_db, 0xC8u * 0x14u)) return 0;
+    for (uint32_t i = 0; i < 0xC8u; i++) {
+        uint32_t slot = car_db + i * 0x14u;
+        if (kernel::R32(slot) == handle) return slot;
+    }
+    return 0;
+}
+
+static uint32_t PickFallbackCarHandle(uint32_t car_db, uint32_t h1b60) {
+    if (!game::IsCommittedRange(car_db, 0xC8u * 0x14u)) return 0;
+    if (h1b60 != 0 && h1b60 != 0xFFFFFFFFu) {
+        uint32_t s = FindCarSlotInDb(car_db, h1b60);
+        if (s && IsKnownCarType(kernel::R32(s + 8u))) return h1b60;
+    }
+    for (uint32_t i = 0; i < 0xC8u; i++) {
+        uint32_t slot = car_db + i * 0x14u;
+        uint32_t h = kernel::R32(slot);
+        if (h != 0xFFFFFFFFu && IsKnownCarType(kernel::R32(slot + 8u))) return h;
+    }
+    return 0;
+}
+
+X86_FUNC(sub_00242FD0) {
+    uint32_t sys = game::IsCommittedRange(game::kCareerRoot, 4) ? kernel::R32(game::kCareerRoot) : 0;
+    uint32_t count = game::IsCommittedRange(sys + 0xD8u, 4) ? kernel::R32(sys + 0xD8u) : 0;
+    uint32_t list = (count > 0 && game::IsCommittedRange(sys + 0xD4u, 4)) ? kernel::R32(sys + 0xD4u) : 0;
+    uint32_t career = game::IsCommittedRange(list, 4) ? kernel::R32(list) : 0;
+    if (career >= 0x10000u && game::IsCommittedRange(career + 0x234u, 0xC8u * 0x14u)) {
+        uint32_t car_db = career + 0x234u;
+        uint32_t wing = QueryFeVar(ctx, base, 0x1771u, 0xFFFFFFFFu, 0u);
+        uint32_t h1b60 = QueryFeVar(ctx, base, 0x1B60u, 0xFFFFFFFFu, 0xFFFFFFFFu);
+        uint32_t max_idx = (game::IsCommittedRange(0x497D44u, 4) && kernel::R32(0x497D44u) == 1u) ? 2u : 1u;
+        for (uint32_t idx = 0; idx < max_idx; idx++) {
+            uint32_t h = QueryFeVar(ctx, base, 0x1B58u, idx, 0xFFFFFFFFu);
+            uint32_t slot = FindCarSlotInDb(car_db, h);
+            if (slot && IsKnownCarType(kernel::R32(slot + 8u))) continue;
+            uint32_t fb = PickFallbackCarHandle(car_db, h1b60);
+            LOGR("career: repair 1b58[%u]=%08X (wing=%08X 1b60=%08X) -> %08X", idx, h, wing, h1b60, fb);
+            if (fb) {
+                SetFeVar(ctx, base, 0x1B58u, fb, idx);
+                uint32_t after = QueryFeVar(ctx, base, 0x1B58u, idx, 0xFFFFFFFFu);
+                if (after != fb) LOGR("career: SetFeVar 1b58[%u] -> %08X (expected %08X)", idx, after, fb);
+            } else {
+                LOGR("career: car_db empty [0]=%08X/%08X [1]=%08X/%08X", kernel::R32(car_db),
+                     kernel::R32(car_db + 8u), kernel::R32(car_db + 0x14u), kernel::R32(car_db + 0x1Cu));
+            }
+        }
+    }
+    __imp__sub_00242FD0(ctx, base);
+}
+
 namespace game {
 namespace {
 
@@ -554,12 +675,12 @@ using ::game::kCFEng;  // cFEng's instance: FEngine at its first field, the pack
 // FEng's packages as they open: the name's hash (+0x10) and every object under it (the list at +0x4C, the next at +4,
 // a group's children at +0x64 and +0x60), so the HUD's groups can be found by hash as Most Wanted's were
 static void DumpObjects(uint32_t o, int depth, int& budget) {
-    for (; o && budget-- > 0; o = kernel::R32(o + 4)) {
+    for (; IsCommittedRange(o, 0x68) && budget-- > 0; o = kernel::R32(o + 4)) {
         uint32_t hash = kernel::R32(o + 0x10), type = kernel::R32(o + 0x18);
         // the data's place too: the groups are told apart by where they are drawn as well as by hash
         uint32_t data = kernel::R32(o + 0x2C);
         float x = 0, y = 0;
-        if (data && mem::IsCommitted(data + 0x23)) {
+        if (IsCommittedRange(data + 0x1C, 8)) {
             uint32_t bx = kernel::R32(data + 0x1C), by = kernel::R32(data + 0x20);
             std::memcpy(&x, &bx, 4);
             std::memcpy(&y, &by, 4);

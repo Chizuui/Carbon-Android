@@ -1102,7 +1102,7 @@ private:
     void PollFences();
     void ResetFrame(Frame& f);
     void Transition(Image& im, VkImageLayout to);
-    void BeginRender(Image* color, Image* depth);
+    bool BeginRender(Image* color, Image* depth);
     void EndRender();
     void FlushClear(Image& im);
     // without dynamic rendering: render passes that only load and store, and framebuffers per pair of views
@@ -1923,7 +1923,8 @@ VulkanBackend::Alloc VulkanBackend::Upload(VkDeviceSize size, VkDeviceSize align
 
 VulkanBackend::Alloc VulkanBackend::Constants(const void* data, size_t bytes) {
     Alloc a = Upload(kUboRange, kUboAlign);
-    std::memcpy(a.cpu, data, std::min<size_t>(bytes, kUboRange));
+    if (!a.cpu) return a;
+    if (data && bytes) std::memcpy(a.cpu, data, std::min<size_t>(bytes, kUboRange));
     return a;
 }
 
@@ -2112,8 +2113,8 @@ void VulkanBackend::FlushClear(Image& im) {
 
 // a rendering over the whole of the attachments, which keep what they hold or load a clear left on them; the one under
 // way carries on when it has the same ones
-void VulkanBackend::BeginRender(Image* color, Image* depth) {
-    if (rendering_ && color == rend_color_ && depth == rend_depth_) return;
+bool VulkanBackend::BeginRender(Image* color, Image* depth) {
+    if (rendering_ && color == rend_color_ && depth == rend_depth_) return true;
     EndRender();
     // the area is the target's: a depth larger than it is cleared whole on its own
     if (depth && depth->pending && color && (depth->w != color->w || depth->h != color->h)) FlushClear(*depth);
@@ -2166,11 +2167,17 @@ void VulkanBackend::BeginRender(Image* color, Image* depth) {
         bi.renderPass = Pass(cf, df, clears);
         bi.framebuffer = Framebuffer(cf, df, color ? color->attach : VK_NULL_HANDLE, depth ? depth->attach : VK_NULL_HANDLE,
                                      any->w, any->h);
+        if (!bi.renderPass || !bi.framebuffer) {
+            rendering_ = false;
+            rend_color_ = nullptr;
+            rend_depth_ = nullptr;
+            return false;
+        }
         bi.renderArea = {{0, 0}, {any->w, any->h}};
         bi.clearValueCount = clears ? n : 0;
         bi.pClearValues = values;
         vkCmdBeginRenderPass(Cb(), &bi, VK_SUBPASS_CONTENTS_INLINE);
-        return;
+        return true;
     }
     VkRenderingAttachmentInfoKHR ca{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR};
     VkRenderingAttachmentInfoKHR da{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR};
@@ -2205,6 +2212,7 @@ void VulkanBackend::BeginRender(Image* color, Image* depth) {
         depth->pending = 0;
     }
     begin_rendering_(Cb(), &ri);
+    return true;
 }
 
 void VulkanBackend::EndRender() {
@@ -2902,6 +2910,7 @@ void VulkanBackend::Blit(Image& dst, const VkRect2D& to, Image& src, const float
     float c[8] = {uvrect[0], uvrect[1], uvrect[2], uvrect[3], o.gamma ? 1.0f : 0.0f, o.alpha ? 1.0f : 0.0f,
                   float(o.taps), o.mul};
     Alloc cb = Constants(c, sizeof(c));
+    if (!cb.cpu) return;
     VkPipeline pipe = FullScreenPipeline(kBlitHlsl, "psmain", dst.fmt, VK_FORMAT_UNDEFINED, o.over);
     if (!pipe) return;
     Transition(src, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -2909,7 +2918,7 @@ void VulkanBackend::Blit(Image& dst, const VkRect2D& to, Image& src, const float
     const VkImageView views[4] = {src.view, lut_.view, VK_NULL_HANDLE, VK_NULL_HANDLE};
     const VkSampler samplers[4] = {linear_, point_, point_, point_};
     VkDescriptorSet set = Set(views, samplers);
-    BeginRender(&dst, nullptr);
+    if (!BeginRender(&dst, nullptr)) return;
     vkCmdBindPipeline(Cb(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
     BindSet(set, cb.off, cb.off);
     SetViewport(float(to.offset.x), float(to.offset.y), float(to.extent.width), float(to.extent.height));
@@ -2944,13 +2953,14 @@ bool VulkanBackend::DepthCopy(const State& s) {
     Target& dst = di->second;
     Target& src = si->second;
     Alloc cb = Constants(nullptr, 0);
+    if (!cb.cpu) return true;
     VkPipeline pipe = FullScreenPipeline(kDepthHlsl, "psmain", VK_FORMAT_UNDEFINED, depth_fmt_, false);
     if (!pipe) return false;
     Transition(src.img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     const VkImageView views[4] = {src.img.view, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
     const VkSampler samplers[4] = {linear_, point_, point_, point_};
     VkDescriptorSet set = Set(views, samplers);
-    BeginRender(nullptr, &dst.img);
+    if (!BeginRender(nullptr, &dst.img)) return true;
     vkCmdBindPipeline(Cb(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
     BindSet(set, cb.off, cb.off);
     SetViewport(0, 0, float(dst.w), float(dst.h));
@@ -3431,6 +3441,7 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         vc = last_vc_;
     } else {
         vc = Constants(s.vsc.data(), sizeof(s.vsc));
+        if (!vc.cpu) return;
         if (g_vsc_counted) last_vsc_changes_ = g_vsc_changes;
         else std::memcpy(last_vsc_.data(), s.vsc.data(), sizeof(s.vsc));
         last_vc_ = vc;
@@ -3438,11 +3449,13 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
         last_vc_epoch_ = upload_epoch_;
     }
     Alloc dc = Constants(&c, sizeof(c));
+    if (!dc.cpu) return;
     VkBuffer vbufs[16];
     VkDeviceSize voffs[16];
     for (uint32_t i = 0; i < a.buffer_count; i++) {
         const VertexBuffer& b = a.buffers[i];
         Alloc v = Upload(std::max<uint32_t>(b.bytes, 4), 16);
+        if (!v.cpu) return;
         if (b.src && b.bytes) std::memcpy(v.cpu, b.src, b.bytes);
         vbufs[i] = v.buf;
         voffs[i] = v.off;
@@ -3451,6 +3464,7 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     if (a.index_count) {
         uint32_t ibytes = a.index_count * (a.index16 ? 2 : 4);
         ib = Upload(ibytes, 4);
+        if (!ib.cpu) return;
         std::memcpy(ib.cpu, a.index_src, ibytes);
     }
     bool clamp = AnyStageWraps(s) && UnitTexcoords(a);
@@ -3459,7 +3473,7 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     VkDescriptorSet set = Set(stages.view, samplers);
 
     // the rendering
-    BeginRender(draw_rt_ ? &draw_rt_->img : nullptr, draw_ds_ ? &draw_ds_->img : nullptr);
+    if (!BeginRender(draw_rt_ ? &draw_rt_->img : nullptr, draw_ds_ ? &draw_ds_->img : nullptr)) return;
     if (draw_rt_) draw_rt_->drawn = true, draw_rt_->writes++;
     if (draw_ds_) draw_ds_->drawn = true;
     vkCmdBindPipeline(Cb(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);

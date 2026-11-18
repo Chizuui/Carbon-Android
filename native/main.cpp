@@ -3,7 +3,11 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <android/log.h>
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <sys/system_properties.h>
+#include <ucontext.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -43,6 +47,149 @@ std::atomic<bool> g_foreground{true};
 std::atomic<uint32_t> g_surface_epoch{0};
 std::mutex g_foreground_lock;
 std::condition_variable g_foreground_cv;
+char g_crash_log_path[512] = {};
+
+void CrashAppendStr(char* dst, size_t& pos, size_t cap, const char* s) {
+    if (!s) return;
+    while (*s && pos + 1 < cap) dst[pos++] = *s++;
+}
+
+void CrashAppendHex(char* dst, size_t& pos, size_t cap, uintptr_t v) {
+    CrashAppendStr(dst, pos, cap, "0x");
+    char tmp[2 * sizeof(uintptr_t)];
+    int n = 0;
+    do {
+        unsigned d = unsigned(v & 0xFu);
+        tmp[n++] = char(d < 10 ? '0' + d : 'a' + d - 10);
+        v >>= 4;
+    } while (v && n < int(sizeof(tmp)));
+    while (n-- > 0 && pos + 1 < cap) dst[pos++] = tmp[n];
+}
+
+void CrashAppendInt(char* dst, size_t& pos, size_t cap, int v) {
+    if (v < 0) {
+        CrashAppendStr(dst, pos, cap, "-");
+        v = -v;
+    }
+    char tmp[16];
+    int n = 0;
+    do {
+        tmp[n++] = char('0' + (v % 10));
+        v /= 10;
+    } while (v && n < int(sizeof(tmp)));
+    while (n-- > 0 && pos + 1 < cap) dst[pos++] = tmp[n];
+}
+
+const char* SignalName(int sig) {
+    switch (sig) {
+        case SIGSEGV: return "SIGSEGV";
+        case SIGABRT: return "SIGABRT";
+        case SIGBUS: return "SIGBUS";
+        case SIGILL: return "SIGILL";
+        case SIGFPE: return "SIGFPE";
+        default: return "SIG";
+    }
+}
+
+void WriteAll(int fd, const char* buf, size_t len) {
+    while (len > 0) {
+        ssize_t n = write(fd, buf, len);
+        if (n <= 0) break;
+        buf += n;
+        len -= size_t(n);
+    }
+}
+
+void CrashWriteModule(int fd, char* buf, size_t cap, const char* tag, uintptr_t addr) {
+    Dl_info dl{};
+    if (!addr || !dladdr(reinterpret_cast<const void*>(addr), &dl)) return;
+    size_t pos = 0;
+    CrashAppendStr(buf, pos, cap, "error: crash ");
+    CrashAppendStr(buf, pos, cap, tag);
+    CrashAppendStr(buf, pos, cap, " module=");
+    CrashAppendStr(buf, pos, cap, dl.dli_fname ? dl.dli_fname : "?");
+    if (dl.dli_fbase) {
+        CrashAppendStr(buf, pos, cap, "+");
+        CrashAppendHex(buf, pos, cap, addr - uintptr_t(dl.dli_fbase));
+    }
+    if (dl.dli_sname) {
+        CrashAppendStr(buf, pos, cap, " sym=");
+        CrashAppendStr(buf, pos, cap, dl.dli_sname);
+        if (dl.dli_saddr) {
+            CrashAppendStr(buf, pos, cap, "+");
+            CrashAppendHex(buf, pos, cap, addr - uintptr_t(dl.dli_saddr));
+        }
+    }
+    CrashAppendStr(buf, pos, cap, "\n");
+    if (fd >= 0) WriteAll(fd, buf, pos);
+    WriteAll(STDERR_FILENO, buf, pos);
+}
+
+constexpr int kCrashSigs[] = {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE};
+struct sigaction g_prev_sa[5]{};
+
+void CrashHandler(int sig, siginfo_t* info, void* ctx) {
+    uintptr_t pc = 0, lr = 0, sp = 0;
+#if defined(__aarch64__)
+    if (ctx) {
+        const auto* uc = static_cast<const ucontext_t*>(ctx);
+        pc = uintptr_t(uc->uc_mcontext.pc);
+        lr = uintptr_t(uc->uc_mcontext.regs[30]);
+        sp = uintptr_t(uc->uc_mcontext.sp);
+    }
+#elif defined(__x86_64__)
+    if (ctx) {
+        const auto* uc = static_cast<const ucontext_t*>(ctx);
+        pc = uintptr_t(uc->uc_mcontext.gregs[REG_RIP]);
+        sp = uintptr_t(uc->uc_mcontext.gregs[REG_RSP]);
+    }
+#endif
+    char buf[512];
+    size_t pos = 0;
+    CrashAppendStr(buf, pos, sizeof(buf), "error: crash ");
+    CrashAppendStr(buf, pos, sizeof(buf), SignalName(sig));
+    CrashAppendStr(buf, pos, sizeof(buf), " sig=");
+    CrashAppendInt(buf, pos, sizeof(buf), sig);
+    if (info) {
+        CrashAppendStr(buf, pos, sizeof(buf), " code=");
+        CrashAppendInt(buf, pos, sizeof(buf), info->si_code);
+        CrashAppendStr(buf, pos, sizeof(buf), " addr=");
+        CrashAppendHex(buf, pos, sizeof(buf), uintptr_t(info->si_addr));
+    }
+    CrashAppendStr(buf, pos, sizeof(buf), " pc=");
+    CrashAppendHex(buf, pos, sizeof(buf), pc);
+    CrashAppendStr(buf, pos, sizeof(buf), " lr=");
+    CrashAppendHex(buf, pos, sizeof(buf), lr);
+    CrashAppendStr(buf, pos, sizeof(buf), " sp=");
+    CrashAppendHex(buf, pos, sizeof(buf), sp);
+    CrashAppendStr(buf, pos, sizeof(buf), "\n");
+
+    int fd = g_crash_log_path[0] ? open(g_crash_log_path, O_WRONLY | O_APPEND) : -1;
+    if (fd >= 0) WriteAll(fd, buf, pos);
+    WriteAll(STDERR_FILENO, buf, pos);
+
+    CrashWriteModule(fd, buf, sizeof(buf), "pc", pc);
+    if (lr && lr != pc) CrashWriteModule(fd, buf, sizeof(buf), "lr", lr);
+    if (fd >= 0) close(fd);
+    for (size_t i = 0; i < sizeof(kCrashSigs) / sizeof(kCrashSigs[0]); i++) {
+        if (kCrashSigs[i] == sig) {
+            sigaction(sig, &g_prev_sa[i], nullptr);
+            break;
+        }
+    }
+    raise(sig);
+}
+
+void InstallCrashHandlers(const std::string& path) {
+    std::snprintf(g_crash_log_path, sizeof(g_crash_log_path), "%s", path.c_str());
+    struct sigaction sa{};
+    sa.sa_sigaction = CrashHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
+    for (size_t i = 0; i < sizeof(kCrashSigs) / sizeof(kCrashSigs[0]); i++) {
+        sigaction(kCrashSigs[i], &sa, &g_prev_sa[i]);
+    }
+}
 
 std::string Utf8(const wchar_t* w) {
     std::string s;
@@ -370,6 +517,7 @@ int main(int, char**) {
     // a file named perf in the app's folder: the perf log lines, as XBE_PERF gives them on a PC
     if (std::error_code ec; std::filesystem::exists(app::ExeDir() / "perf", ec)) setenv("XBE_PERF", "1", 1);
     logx::Init(LogDir().string(), app::kGame.log);
+    InstallCrashHandlers(logx::Path());
     LOGR("app: log %s", logx::Path().c_str());
     app::Load();
     if (app::kGame.init) app::kGame.init();

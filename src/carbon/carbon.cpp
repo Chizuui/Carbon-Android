@@ -469,7 +469,7 @@ static void DumpObjects(uint32_t o, int depth, int& budget) {
             std::memcpy(&x, &bx, 4);
             std::memcpy(&y, &by, 4);
         }
-        LOGI("feobj: %*s%08X t%u %d,%d", depth * 2, "", hash, type, int(x), int(y));
+        LOGR("feobj: %*s%08X t%u %d,%d", depth * 2, "", hash, type, int(x), int(y));
         if (type == 5 && depth < 8) DumpObjects(kernel::R32(o + 0x64), depth + 1, budget);
     }
 }
@@ -489,7 +489,7 @@ static void DumpOpenPackages() {
         if (seen) continue;
         if (n < 32) dumped[n++] = p;
         int budget = 400;
-        LOGI("fepkg: open %s", name && mem::IsCommitted(name) ? (const char*)kernel::HostPtr(name) : "?");
+        LOGR("fepkg: open %s", name && mem::IsCommitted(name) ? (const char*)kernel::HostPtr(name) : "?");
         if (name && mem::IsCommitted(name)) DumpObjects(kernel::R32(p + 0x4C), 1, budget);
     }
 }
@@ -506,9 +506,9 @@ static void DumpRaceHud() {
         uint32_t name = mem::IsCommitted(p + 0xC) ? kernel::R32(p + 0xC) : 0;
         if (!name || !mem::IsCommitted(name)) continue;
         const char* s = (const char*)kernel::HostPtr(name);
-        if (std::strncmp(s, "HUD_", 4) != 0 && std::strncmp(s, "EA_T", 4) != 0) continue;
+        if (std::strncmp(s, "HUD_", 4) != 0) continue;
         int budget = 2000;
-        LOGI("fepkg: race %s", s);
+        LOGR("fepkg: race %s", s);
         DumpObjects(kernel::R32(p + 0x4C), 1, budget);
         done = true;
     }

@@ -6,6 +6,7 @@
 // is updated, the last writer before the drawing; and a place found other than as it was left is the game's new one,
 // moved again from there
 #include <cstring>
+#include <mutex>
 #include <unordered_map>
 
 #include "common/hud_layout.h"
@@ -42,11 +43,22 @@ constexpr Piece kPieces[] = {
     // banner is a root object of its package. Only containers are listed: a group found is not walked into, so its
     // children move with it and must not be moved again
     {0xAB8A0643, kHudSpeedometer},  // the cluster: the dial and SpeedometerGroup's digits
+    {0xE44B5D54, kHudSpeedometer},  // Speedbreaker meter group (icon + SPEEDBREAKER_METER)
+    {0x28003CE1, kHudSpeedometer},  // X_MULTIPLIER_FLASHER
+    {0x6762BD08, kHudSpeedometer},  // HEADERSECONDARY_DRIFT
+    {0x53BA5E3A, kHudSpeedometer},  // HEADERSECONDARY_DRIFT2
+    {0xAA6FB774, kHudSpeedometer},  // NOS_SHOW_HIDE_GROUP
+    {0x3A163857, kHudSpeedometer},  // Nitrous gauge group
     {0x1603009E, kHudMinimap},      // the map: the ring, the rim, the roads, the waypoint
     {0x00A1A862, kHudMinimap},      // the map's icons: the player's arrow, the cops, the events
     {0x0F365871, kHudMinimap},      // TRACK_MAP: the four map tiles
+    {0x6CD0C4B8, kHudMinimap},      // RADAR_RING
+    {0x382D2FC9, kHudMinimap},      // TRACKMAPTARGETRING
     {0xB1C5ED0D, kHudRaceInfo},     // RaceInformationGroup: the position, the lap and the time
     {0x5ED609A1, kHudRaceInfo},     // LeaderBoardGroup: the racers under it
+    {0x2CBBF14A, kHudRaceInfo},     // TOUGE_ZONE_GROUP
+    {0x82308C63, kHudRaceInfo},     // PURSUITBOARD
+    {0xABA3B16F, kHudRaceInfo},     // CANYON_METER_GROUP
     {0x7FAC287B, kHudTrax},         // EA Trax's banner, in the race's package and in the front end's
 };
 
@@ -55,6 +67,7 @@ struct Moved {
     float set_x, set_y;    // what was written over it
 };
 std::unordered_map<uint32_t, Moved> g_moved;  // by the object's data
+std::mutex g_hud_mtx;
 
 uint32_t Peek(uint32_t va) { return va && mem::IsCommitted(va) && mem::IsCommitted(va + 3) ? kernel::R32(va) : 0; }
 
@@ -105,6 +118,7 @@ bool HudPackage(uint32_t p) {
 }  // namespace
 
 void ApplyHudLayout() {
+    std::lock_guard<std::mutex> lock(g_hud_mtx);
     uint32_t cfeng = Peek(kCFEng), fe = cfeng ? Peek(cfeng) : 0;
     std::unordered_map<uint32_t, Moved> seen;
     int n = 0;
@@ -116,5 +130,53 @@ void ApplyHudLayout() {
     g_moved.swap(seen);  // a package gone forgets its objects
 }
 
+struct MinimapOriginScope {
+    uint32_t obj = 0;
+    float orig_x = 0.0f, orig_y = 0.0f;
+    bool active = false;
+
+    explicit MinimapOriginScope(uint32_t minimap) : obj(minimap) {
+        constexpr uint32_t kMinimapOriginX = 0xB4, kMinimapOriginY = 0xB8;
+        if (!obj || !mem::IsCommitted(obj + kMinimapOriginX) || !mem::IsCommitted(obj + kMinimapOriginY + 3)) return;
+        float dx = g_hud_x[kHudMinimap].load(std::memory_order_relaxed);
+        float dy = g_hud_y[kHudMinimap].load(std::memory_order_relaxed);
+        if (dx == 0.0f && dy == 0.0f) return;
+        orig_x = Float(obj + kMinimapOriginX);
+        orig_y = Float(obj + kMinimapOriginY);
+        SetFloat(obj + kMinimapOriginX, orig_x + dx);
+        SetFloat(obj + kMinimapOriginY, orig_y + dy);
+        active = true;
+    }
+
+    ~MinimapOriginScope() {
+        constexpr uint32_t kMinimapOriginX = 0xB4, kMinimapOriginY = 0xB8;
+        if (!active) return;
+        SetFloat(obj + kMinimapOriginX, orig_x);
+        SetFloat(obj + kMinimapOriginY, orig_y);
+    }
+};
+
 }  // namespace game
+
+// FEngine::UpdateAllPackages (thiscall, 0 args): called by cFEng::Service (0x14D990) after HUD elements write
+// their positions and before FEng renders, so moving here catches per-frame updates before drawing.
+X86_EXTERN_FUNC(__imp__sub_0014D8B0);
+X86_FUNC(sub_0014D8B0) {
+    __imp__sub_0014D8B0(ctx, base);
+    game::ApplyHudLayout();
+}
+
+// Hud_Minimap GPS route rebuild & render read cached TRACK_MAP coordinates at +0xB4/+0xB8 directly instead of
+// FEng object positions; shift them only for those calls so helper methods reading +0xB4/+0xB8 aren't double-shifted.
+X86_EXTERN_FUNC(__imp__sub_00158520);
+X86_FUNC(sub_00158520) {
+    game::MinimapOriginScope scope(ctx.ecx);
+    __imp__sub_00158520(ctx, base);
+}
+
+X86_EXTERN_FUNC(__imp__sub_00158AE0);
+X86_FUNC(sub_00158AE0) {
+    game::MinimapOriginScope scope(ctx.ecx);
+    __imp__sub_00158AE0(ctx, base);
+}
 

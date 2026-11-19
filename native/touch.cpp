@@ -419,7 +419,7 @@ constexpr Button kButtons[] = {
     {"x", "X", Icon::Text, kAnalogX, Shape::Round, "SPEEDBREAKER"},
     {"y", "Y", Icon::Text, kAnalogY, Shape::Round, "LOOK BACK"},
     {"black", "BLACK", Icon::Text, 4, Shape::Tab, "CAMERA"},
-    {"white", "WHITE", Icon::Text, 5, Shape::Tab},
+    {"white", "WHITE", Icon::Text, 5, Shape::Round},
     {"lt", "LT", Icon::Text, kAnalogLT, Shape::Tab},
     {"rt", "RT", Icon::Text, kAnalogRT, Shape::Tab},
     {"start", "START", Icon::Text, kBit + 4, Shape::Pill},
@@ -463,7 +463,7 @@ using Layout = std::array<Place, kPlaces>;
 // lever (the right stick) low in the middle. No left stick, no other shoulders
 constexpr Layout kRacing = {{
     {0.80f, 0.50f, 0.06f}, {0.92f, 0.38f, 0.068f}, {0.665f, 0.60f, 0.052f}, {0.80f, 0.24f, 0.045f},
-    {0.932f, 0.085f, 0.048f}, {0.068f, 0.085f, 0.048f, true},
+    {0.932f, 0.085f, 0.048f}, {0.068f, 0.085f, 0.048f},
     {0.765f, 0.85f, 0.085f}, {0.915f, 0.74f, 0.17f},
     {0.585f, 0.075f, 0.036f}, {0.415f, 0.075f, 0.036f}, {0.50f, 0.075f, 0.045f},
     {0.07f, 0.28f, 0.038f}, {0.07f, 0.46f, 0.038f}, {0.03f, 0.37f, 0.038f}, {0.11f, 0.37f, 0.038f},
@@ -624,24 +624,32 @@ bool FeMenu() { return !g_editing && game::FeMenuShown(); }
 
 constexpr float kTabAspect = 2.3f, kPillAspect = 2.1f, kPedalAspect = 0.6f;
 
-// In FEng menus (before a race / while paused), show only D-Pad (left) and ABXY in an Xbox diamond layout (right),
-// using the same button art as in-race, alongside the Settings gear.
+// In FEng menus (before a race / while paused), show D-Pad (left), ABXY Xbox diamond (right),
+// Black/White below-right of ABXY, and Start/Back (Select) at the top alongside Settings.
 int FeMenuSlot(size_t i) {
     if (i >= kButtonCount) return -1;
     int press = kButtons[i].press;
     if (press >= kAnalogA && press <= kAnalogY) return press - kAnalogA;  // 0..3: A, B, X, Y
     if (press >= kBit && press <= kBit + 3) return 4 + (press - kBit);   // 4..7: Up, Down, Left, Right
+    if (press == kBit + 4) return 8;                                     // 8: Start
+    if (press == kBit + 5) return 9;                                     // 9: Back (Select)
+    if (press == 4) return 10;                                           // 10: Black
+    if (press == 5) return 11;                                           // 11: White
     return -1;
 }
-constexpr Place kFeXbox[8] = {
-    {0.885f, 0.765f, 0.055f},  // A (bottom)
-    {0.943f, 0.640f, 0.055f},  // B (right)
-    {0.827f, 0.640f, 0.055f},  // X (left)
-    {0.885f, 0.515f, 0.055f},  // Y (top)
+constexpr Place kFeXbox[12] = {
+    {0.885f, 0.745f, 0.055f},  // A (bottom)
+    {0.943f, 0.620f, 0.055f},  // B (right)
+    {0.827f, 0.620f, 0.055f},  // X (left)
+    {0.885f, 0.495f, 0.055f},  // Y (top)
     {0.115f, 0.515f, 0.050f},  // dpad_up
     {0.115f, 0.765f, 0.050f},  // dpad_down
     {0.057f, 0.640f, 0.050f},  // dpad_left
     {0.173f, 0.640f, 0.050f},  // dpad_right
+    {0.585f, 0.075f, 0.036f},  // start
+    {0.415f, 0.075f, 0.036f},  // back (select)
+    {0.940f, 0.875f, 0.045f},  // black
+    {0.835f, 0.875f, 0.045f},  // white
 };
 
 // the RACING layout's arrows and wheel show as STEERING picks them, in the editor too
@@ -1578,7 +1586,9 @@ void DrawControl(ImDrawList* dl, size_t i, bool on, int fade, float th) {
     if (b.icon == Icon::Text) {
         ImU32 text = on ? Fade(255, 255, 255, 255) : shape == Shape::Round ? Fade(colour, 235 * fade / 100)
                                                                              : Fade(kCream, 225 * fade / 100);
-        float size = shape == Shape::Round ? hh * 1.05f : shape == Shape::Pill ? hh * 0.78f : hh * 0.8f;
+        float size = shape == Shape::Round ? (std::strlen(b.label) > 2 ? hh * 0.52f : hh * 1.05f)
+                                           : shape == Shape::Pill ? hh * 0.78f
+                                                                  : hh * 0.8f;
         CentredText(dl, ImVec2(cx, cy - (shape == Shape::Tab ? hh * 0.08f : 0)), size, text, b.label);
     }
     if (b.caption && !FeMenu()) {  // its move under it, in a dark band to read over the game

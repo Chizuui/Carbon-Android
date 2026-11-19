@@ -512,8 +512,47 @@ float g_wheel_turn = 0;
 bool g_wheel_held = false;
 bool g_loaded = false;
 // the editor: the layout before it opened (for Cancel), the control picked
+enum class EditCategory : uint8_t { Race, Menu };
+EditCategory g_edit_cat = EditCategory::Race;
 std::atomic<bool> g_editing{false};
 Layout g_before = kRacing;
+Place g_menu_layout[14] = {
+    {0.885f, 0.745f, 0.055f},  // A (bottom)
+    {0.943f, 0.620f, 0.055f},  // B (right)
+    {0.827f, 0.620f, 0.055f},  // X (left)
+    {0.885f, 0.495f, 0.055f},  // Y (top)
+    {0.115f, 0.515f, 0.050f},  // dpad_up
+    {0.115f, 0.765f, 0.050f},  // dpad_down
+    {0.057f, 0.640f, 0.050f},  // dpad_left
+    {0.173f, 0.640f, 0.050f},  // dpad_right
+    {0.585f, 0.075f, 0.036f},  // start
+    {0.415f, 0.075f, 0.036f},  // back (select)
+    {0.940f, 0.875f, 0.045f},  // black
+    {0.835f, 0.875f, 0.045f},  // white
+    {0.080f, 0.085f, 0.045f},  // lt (L)
+    {0.920f, 0.085f, 0.045f},  // rt (R)
+};
+Place g_menu_before[14];
+constexpr Place kFeXbox[14] = {
+    {0.885f, 0.745f, 0.055f},  // A (bottom)
+    {0.943f, 0.620f, 0.055f},  // B (right)
+    {0.827f, 0.620f, 0.055f},  // X (left)
+    {0.885f, 0.495f, 0.055f},  // Y (top)
+    {0.115f, 0.515f, 0.050f},  // dpad_up
+    {0.115f, 0.765f, 0.050f},  // dpad_down
+    {0.057f, 0.640f, 0.050f},  // dpad_left
+    {0.173f, 0.640f, 0.050f},  // dpad_right
+    {0.585f, 0.075f, 0.036f},  // start
+    {0.415f, 0.075f, 0.036f},  // back (select)
+    {0.940f, 0.875f, 0.045f},  // black
+    {0.835f, 0.875f, 0.045f},  // white
+    {0.080f, 0.085f, 0.045f},  // lt (L)
+    {0.920f, 0.085f, 0.045f},  // rt (R)
+};
+constexpr const char* kMenuSlotIds[14] = {
+    "a", "b", "x", "y", "dpad_up", "dpad_down", "dpad_left", "dpad_right",
+    "start", "back", "black", "white", "lt", "rt"
+};
 float g_before_opacity = 0.85f;
 int g_selected = -1;
 
@@ -557,6 +596,7 @@ void LoadLayout() {
     try {
         toml::table t = toml::parse_file(LayoutFile().string());
         g_layout = kRacing;
+        for (size_t i = 0; i < 14; i++) g_menu_layout[i] = kFeXbox[i];
         for (size_t i = 0; i < game::kHudItems; i++)
             if (const toml::table* p = t["hud"][kHudIds[i]].as_table()) {
                 g_hud[i].x = float((*p)["x"].value_or(0.0));
@@ -584,6 +624,17 @@ void LoadLayout() {
             pl.r = std::clamp(float((*p)["r"].value_or(double(pl.r))), 0.02f, 0.25f);
             pl.hidden = (*p)["hidden"].value_or(false) && Hideable(int(i));
         }
+        if (const toml::table* mc = t["menu_controls"].as_table()) {
+            for (size_t i = 0; i < 14; i++) {
+                if (const toml::table* p = (*mc)[kMenuSlotIds[i]].as_table()) {
+                    Place& pl = g_menu_layout[i];
+                    pl.x = std::clamp(float((*p)["x"].value_or(double(pl.x))), 0.0f, 1.0f);
+                    pl.y = std::clamp(float((*p)["y"].value_or(double(pl.y))), 0.0f, 1.0f);
+                    pl.r = std::clamp(float((*p)["r"].value_or(double(pl.r))), 0.02f, 0.25f);
+                    pl.hidden = (*p)["hidden"].value_or(false);
+                }
+            }
+        }
     } catch (...) {
     }
 }
@@ -595,13 +646,19 @@ void SaveLayout() {
         controls.insert(PlaceId(i),
                         toml::table{{"x", double(p.x)}, {"y", double(p.y)}, {"r", double(p.r)}, {"hidden", p.hidden}});
     }
+    toml::table menu_controls;
+    for (size_t i = 0; i < 14; i++) {
+        const Place& p = g_menu_layout[i];
+        menu_controls.insert(kMenuSlotIds[i],
+                             toml::table{{"x", double(p.x)}, {"y", double(p.y)}, {"r", double(p.r)}, {"hidden", p.hidden}});
+    }
     toml::table hud;
     for (size_t i = 0; i < game::kHudItems; i++)
         hud.insert(kHudIds[i], toml::table{{"x", double(g_hud[i].x)}, {"y", double(g_hud[i].y)}});
     toml::table t{{"version", kLayoutVersion}, {"preset", "racing"}, {"opacity", double(g_opacity)},
                   {"scale", double(g_scale)}, {"stick_mode", g_fixed_sticks ? "fixed" : "floating"},
                   {"steering", kSteeringIds[size_t(g_steering.load())]},
-                  {"controls", controls}, {"hud", hud}};
+                  {"controls", controls}, {"menu_controls", menu_controls}, {"hud", hud}};
     std::ofstream(LayoutFile()) << t << "\n";
 }
 
@@ -611,10 +668,12 @@ void EnsureLayout() {
 
 void OpenEditor() {
     g_before = g_layout;
+    for (size_t i = 0; i < 14; i++) g_menu_before[i] = g_menu_layout[i];
     g_before_opacity = g_opacity;
     g_hud_before = g_hud;
     g_selected = -1;
     g_hud_selected = -1;
+    g_edit_cat = EditCategory::Race;
     g_editing = true;
 }
 
@@ -639,22 +698,6 @@ int FeMenuSlot(size_t i) {
     if (press == kAnalogRT) return 13;                                   // 13: RT (top-right)
     return -1;
 }
-constexpr Place kFeXbox[14] = {
-    {0.885f, 0.745f, 0.055f},  // A (bottom)
-    {0.943f, 0.620f, 0.055f},  // B (right)
-    {0.827f, 0.620f, 0.055f},  // X (left)
-    {0.885f, 0.495f, 0.055f},  // Y (top)
-    {0.115f, 0.515f, 0.050f},  // dpad_up
-    {0.115f, 0.765f, 0.050f},  // dpad_down
-    {0.057f, 0.640f, 0.050f},  // dpad_left
-    {0.173f, 0.640f, 0.050f},  // dpad_right
-    {0.585f, 0.075f, 0.036f},  // start
-    {0.415f, 0.075f, 0.036f},  // back (select)
-    {0.940f, 0.875f, 0.045f},  // black
-    {0.835f, 0.875f, 0.045f},  // white
-    {0.080f, 0.085f, 0.045f},  // lt (L)
-    {0.920f, 0.085f, 0.045f},  // rt (R)
-};
 
 // the RACING layout's arrows and wheel show as STEERING picks them, in the editor too
 bool SteeringShown(int press) {
@@ -666,8 +709,16 @@ bool SteeringShown(int press) {
 
 bool ButtonShown(size_t i) {
     const Button& b = kButtons[i];
+    if (g_editing) {
+        if (g_edit_cat == EditCategory::Menu) {
+            return FeMenuSlot(i) >= 0;
+        } else {
+            // Race mode editor
+            if (b.press == kPanel) return false;
+            return SteeringShown(b.press);
+        }
+    }
     if (!SteeringShown(b.press)) return false;
-    if (g_editing) return true;
     if (FeMenu()) return FeMenuSlot(i) >= 0 || b.keep;
     if (g_layout[i].hidden) return false;
     if (!game::Racing()) return b.keep;  // no pad out of a race: the front end's screens, the loading screens
@@ -718,11 +769,15 @@ void DrawArt(ImDrawList* dl, const Art& a, ImVec2 c, float hh, ImU32 tint, float
 }
 
 // a control's place: its layout's, or the FEng menus' Xbox layout for D-Pad + ABXY
-const Place& PlaceOf(size_t i) {
-    if (!g_editing && FeMenu()) {
-        if (int m = FeMenuSlot(i); m >= 0) return kFeXbox[m];
+Place& MutablePlaceOf(size_t i) {
+    if ((g_editing && g_edit_cat == EditCategory::Menu) || (!g_editing && FeMenu())) {
+        if (int m = FeMenuSlot(i); m >= 0) return g_menu_layout[m];
     }
     return g_layout[i];
+}
+
+const Place& PlaceOf(size_t i) {
+    return MutablePlaceOf(i);
 }
 
 void Centre(size_t i, float& cx, float& cy) {
@@ -751,16 +806,19 @@ void Extent(size_t i, float& hw, float& hh) {
     hw = hh * (s == Shape::Tab ? kTabAspect : s == Shape::Pill ? kPillAspect : s == Shape::Pedal ? kPedalAspect : 1.0f);
 }
 
-// the editor's bar at the top: Reset, smaller and bigger for the picked control, hide or show it, Cancel, Done, in
-// screen shares
-constexpr const char* kBarLabels[] = {"RESET", "-", "+", "HIDE", "CANCEL", "DONE"};
-enum { kBarReset, kBarSmaller, kBarBigger, kBarHide, kBarCancel, kBarDone, kBarCount };
-constexpr float kBarY = 0.17f, kBarH = 0.09f, kBarW = 0.13f, kBarGap = 0.02f;
-constexpr float kBarSizeW = 0.07f;                       // the - and + buttons
+// the editor's bar at the top: category tabs (RACE, MENU), Reset, smaller and bigger for the picked control,
+// hide or show it, Cancel, Done, in screen shares
+constexpr const char* kBarLabels[] = {"RACE", "MENU", "RESET", "-", "+", "HIDE", "CANCEL", "DONE"};
+enum { kBarRace, kBarMenu, kBarReset, kBarSmaller, kBarBigger, kBarHide, kBarCancel, kBarDone, kBarCount };
+constexpr float kBarY = 0.17f, kBarH = 0.09f, kBarW = 0.11f, kBarGap = 0.012f;
+constexpr float kBarSizeW = 0.06f;                       // the - and + buttons
 constexpr float kMinRadius = 0.02f, kMaxRadius = 0.25f;  // a control's own radius, in screen heights
 constexpr float kSizeStep = 1.1f;                        // a tap on - or +
 
-float BarWidth(int i) { return i == kBarSmaller || i == kBarBigger ? kBarSizeW : kBarW; }
+float BarWidth(int i) {
+    if (i == kBarSmaller || i == kBarBigger) return kBarSizeW;
+    return kBarW;
+}
 
 // the bar's button under a point, -1 for none
 int BarAt(float x, float y, float rect[4] = nullptr, int which = -1) {
@@ -782,9 +840,13 @@ int BarAt(float x, float y, float rect[4] = nullptr, int which = -1) {
 }
 
 void ResetLayout() {
-    g_layout = kRacing;
-    g_hud = {};
-    PublishHud();
+    if (g_edit_cat == EditCategory::Menu) {
+        for (size_t i = 0; i < 14; i++) g_menu_layout[i] = kFeXbox[i];
+    } else {
+        g_layout = kRacing;
+        g_hud = {};
+        PublishHud();
+    }
     g_selected = -1;
     g_hud_selected = -1;
 }
@@ -794,6 +856,7 @@ void CloseEditor(bool keep) {
         SaveLayout();
     } else {
         g_layout = g_before;
+        for (size_t i = 0; i < 14; i++) g_menu_layout[i] = g_menu_before[i];
         g_opacity = g_before_opacity;
         g_hud = g_hud_before;
         PublishHud();
@@ -972,25 +1035,38 @@ void DragHud(size_t i, float dx, float dy) {
     PublishHud();
 }
 
-void Resize(size_t i, float r) { g_layout[i].r = std::clamp(r, kMinRadius, kMaxRadius); }
+void Resize(size_t i, float r) { MutablePlaceOf(i).r = std::clamp(r, kMinRadius, kMaxRadius); }
 
 // the editor: a touch on the bar resets, resizes the picked control, cancels or saves; a second finger while one
 // drags a control pinches it bigger or smaller; on a control picks it up to move it, anywhere else lets go of the pick
 void EditDown(Finger& f, float x, float y) {
     int bar = BarAt(x, y);
     switch (bar) {
+        case kBarRace:
+            g_edit_cat = EditCategory::Race;
+            g_selected = -1;
+            g_hud_selected = -1;
+            return;
+        case kBarMenu:
+            g_edit_cat = EditCategory::Menu;
+            g_selected = -1;
+            g_hud_selected = -1;
+            return;
         case kBarReset:
             ResetLayout();
             return;
         case kBarSmaller:
         case kBarBigger:
             if (g_selected >= 0) {
-                float r = g_layout[size_t(g_selected)].r;
+                float r = PlaceOf(size_t(g_selected)).r;
                 Resize(size_t(g_selected), bar == kBarBigger ? r * kSizeStep : r / kSizeStep);
             }
             return;
         case kBarHide:
-            if (Hideable(g_selected)) g_layout[size_t(g_selected)].hidden = !g_layout[size_t(g_selected)].hidden;
+            if (Hideable(g_selected)) {
+                Place& pl = MutablePlaceOf(size_t(g_selected));
+                pl.hidden = !pl.hidden;
+            }
             return;
         case kBarCancel:
             CloseEditor(false);
@@ -1007,22 +1083,22 @@ void EditDown(Finger& f, float x, float y) {
         f.role = Role::Pinch;
         f.button = d.button;
         f.x0 = std::max(std::hypot(x - d.x, y - d.y), 1.0f);
-        f.y0 = g_layout[d.button].r;
+        f.y0 = PlaceOf(d.button).r;
         return;
     }
     // kPlaces for none: kButtonCount, HitButton's none, is the left stick's place
     size_t b = HitButton(x, y);
-    if (b == kButtonCount) {
+    if (b == kButtonCount && g_edit_cat == EditCategory::Race) {
         b = kPlaces;
         for (size_t s : {kStick, kRStick}) {
             float sx = g_layout[s].x * Width(), sy = g_layout[s].y * Height(), sr = Radius(s);
             if (b == kPlaces && (x - sx) * (x - sx) + (y - sy) * (y - sy) <= sr * sr) b = s;
         }
     }
-    // else a HUD item, under the controls
-    if (b == kPlaces) {
+    // else a HUD item, under the controls (Race mode only)
+    if (b == kPlaces || (b == kButtonCount && g_edit_cat == EditCategory::Menu)) {
         g_selected = -1;
-        g_hud_selected = HitHud(x, y);
+        g_hud_selected = (g_edit_cat == EditCategory::Race) ? HitHud(x, y) : -1;
         if (g_hud_selected >= 0) {
             f.role = Role::HudDrag;
             f.button = size_t(g_hud_selected);
@@ -1034,8 +1110,8 @@ void EditDown(Finger& f, float x, float y) {
     g_selected = int(b);
     f.role = Role::Drag;
     f.button = b;
-    f.x0 = x - g_layout[b].x * Width();
-    f.y0 = y - g_layout[b].y * Height();
+    f.x0 = x - PlaceOf(b).x * Width();
+    f.y0 = y - PlaceOf(b).y * Height();
 }
 
 // a finger's angle round the wheel's centre, degrees clockwise from the right
@@ -1126,7 +1202,7 @@ void FingerMove(SDL_FingerID id, float x, float y) {
         f.y = y;
         if (f.role == Role::HudDrag) DragHud(f.button, f.x - f.x0, f.y - f.y0);
         if (f.role == Role::Drag) {
-            Place& p = g_layout[f.button];
+            Place& p = MutablePlaceOf(f.button);
             p.x = std::clamp((x - f.x0) / Width(), 0.0f, 1.0f);
             p.y = std::clamp((y - f.y0) / Height(), 0.0f, 1.0f);
         }
@@ -1638,15 +1714,32 @@ void DrawEditorBar(ImDrawList* dl, float th) {
         BarAt(0, 0, r, i);
         bool done = i == kBarDone;
         bool size = i == kBarSmaller || i == kBarBigger;
+        bool tab = i == kBarRace || i == kBarMenu;
+        bool active_tab = (i == kBarRace && g_edit_cat == EditCategory::Race) ||
+                          (i == kBarMenu && g_edit_cat == EditCategory::Menu);
+
         // - and + wait for a control to be picked, Hide for one that can be hidden
         int alpha = (size && g_selected < 0) || (i == kBarHide && !Hideable(g_selected)) ? 90 : 240;
-        const char* label = i == kBarHide && Hideable(g_selected) && g_layout[size_t(g_selected)].hidden ? "SHOW"
-                                                                                                         : kBarLabels[i];
-        dl->AddRectFilled(ImVec2(r[0], r[1]), ImVec2(r[2], r[3]),
-                          done ? IM_COL32(150, 115, 45, 235) : IM_COL32(20, 18, 14, 225), h * 0.015f);
-        dl->AddRect(ImVec2(r[0], r[1]), ImVec2(r[2], r[3]), IM_COL32(220, 180, 100, alpha), h * 0.015f, 0, th * 0.7f);
+        const char* label = i == kBarHide && Hideable(g_selected) && PlaceOf(size_t(g_selected)).hidden ? "SHOW"
+                                                                                                        : kBarLabels[i];
+
+        ImU32 fill_color;
+        if (active_tab) {
+            fill_color = IM_COL32(200, 150, 50, 245);
+        } else if (tab) {
+            fill_color = IM_COL32(40, 36, 30, 225);
+        } else if (done) {
+            fill_color = IM_COL32(150, 115, 45, 235);
+        } else {
+            fill_color = IM_COL32(20, 18, 14, 225);
+        }
+
+        ImU32 border_color = active_tab ? IM_COL32(255, 220, 120, 255) : IM_COL32(220, 180, 100, alpha);
+
+        dl->AddRectFilled(ImVec2(r[0], r[1]), ImVec2(r[2], r[3]), fill_color, h * 0.015f);
+        dl->AddRect(ImVec2(r[0], r[1]), ImVec2(r[2], r[3]), border_color, h * 0.015f, 0, th * (active_tab ? 1.2f : 0.7f));
         CentredText(dl, ImVec2((r[0] + r[2]) / 2, (r[1] + r[3]) / 2), h * (size ? 0.06f : 0.042f),
-                    IM_COL32(255, 255, 255, alpha), app::Ui(label).c_str());
+                    active_tab ? IM_COL32(0, 0, 0, 255) : IM_COL32(255, 255, 255, alpha), app::Ui(label).c_str());
     }
     CentredText(dl, ImVec2(Width() / 2, (kBarY + kBarH + 0.05f) * h), h * 0.036f, IM_COL32(255, 255, 255, 220),
                 app::Ui("DRAG TO MOVE, PINCH OR - + TO RESIZE").c_str());
@@ -1665,7 +1758,9 @@ void Draw() {
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     if (editing) {
         dl->AddRectFilled(ImVec2(0, 0), ImVec2(Width(), h), IM_COL32(0, 0, 0, 90));
-        DrawHudBoxes(dl, th);
+        if (g_edit_cat == EditCategory::Race) {
+            DrawHudBoxes(dl, th);
+        }
     }
     for (size_t i = 0; i < kButtonCount; i++) {
         const Button& b = kButtons[i];
@@ -1673,7 +1768,7 @@ void Draw() {
         float cx, cy;
         Centre(i, cx, cy);
         float r = Radius(i);
-        bool hidden = g_layout[i].hidden;
+        bool hidden = PlaceOf(i).hidden;
         bool on = !editing && (g_pressed[i] || (b.press == kSteerWheel && g_wheel_held));
         int fade = hidden ? 40 : 100;  // a hidden control shows faint in the editor
         DrawControl(dl, i, on, fade, th);
@@ -1684,10 +1779,10 @@ void Draw() {
             dl->AddLine(ImVec2(cx - k, cy + k), ImVec2(cx + k, cy - k), IM_COL32(255, 80, 60, 220), th);
         }
     }
-    if (editing || (!FeMenu() && !app::MenuOpen() && game::Racing()))
+    if ((editing && g_edit_cat == EditCategory::Race) || (!editing && !FeMenu() && !app::MenuOpen() && game::Racing()))
         for (size_t s : {kStick, kRStick}) DrawStick(dl, th, s);
     if (editing) {
-        if (g_selected >= 0 && IsStick(size_t(g_selected))) {
+        if (g_edit_cat == EditCategory::Race && g_selected >= 0 && IsStick(size_t(g_selected))) {
             size_t s = size_t(g_selected);
             ImVec2 at(g_layout[s].x * Width(), g_layout[s].y * h);
             dl->AddCircle(at, Radius(s) + th * 2, IM_COL32(255, 200, 60, 255), 64, th * 1.5f);

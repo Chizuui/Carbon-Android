@@ -169,6 +169,9 @@ constexpr Entry kEntries[] = {
     {"Right click or Delete restores the default", {u"Clic droit ou Suppr pour rétablir la valeur par défaut", u"Rechtsklick oder Entf stellt den Standard wieder her", u"Clic destro o Canc per ripristinare il predefinito", u"Clic derecho o Supr para restaurar el predeterminado", u"Klik kanan atau Delete untuk kembali ke bawaan"}},
 
     // the touch layout editor
+    {"BALAPAN", {{}, {}, {}, {}, u"Balapan"}},
+    {"MENU", {u"Menu", u"Menü", u"Menu", u"Menú", u"Menu"}},
+    {"RACE", {u"Course", u"Rennen", u"Gara", u"Carrera", u"Balapan"}},
     {"RESET", {{}, {}, {}, {}, u"Atur ulang"}},
     {"CANCEL", {{}, {}, {}, {}, u"Batal"}},
     {"HIDE", {{}, {}, {}, {}, u"Sembunyikan"}},

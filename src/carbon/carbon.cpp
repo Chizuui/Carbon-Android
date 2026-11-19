@@ -667,6 +667,44 @@ X86_FUNC(sub_00242FD0) {
     __imp__sub_00242FD0(ctx, base);
 }
 
+// Guard STRM ring-buffer walk (0xC1B30) against uncommitted guest pointers on the background streamer thread.
+X86_EXTERN_FUNC(__imp__sub_000C1B30);
+X86_FUNC(sub_000C1B30) {
+    uint32_t strm = kernel::R32(ctx.esp + 4);
+    if (!game::IsCommittedRange(strm, 0x10u)) {
+        ctx.eax = 0;
+        ctx.esp += 4;
+        return;
+    }
+    uint32_t hdr = kernel::R32(strm);
+    uint32_t avail = kernel::R32(strm + 8u);
+    uint32_t cur = kernel::R32(strm + 0xCu);
+    if (!game::IsCommittedRange(hdr, 0x44u) || kernel::R32(hdr) != 0x4D525453u || !avail ||
+        !game::IsCommittedRange(cur, 8u)) {
+        ctx.eax = 0;
+        ctx.esp += 4;
+        return;
+    }
+    uint32_t skip = kernel::R32(cur + 4u) & 0xFFFFFFu;
+    int32_t rem = int32_t(avail - skip);
+    if (rem > 0) {
+        uint32_t p = cur + skip;
+        uint32_t target = kernel::R32(strm + 4u) << 24;
+        for (int step = 0; step < 4096; step++) {
+            if (!game::IsCommittedRange(p, 8u)) {
+                ctx.eax = 0;
+                ctx.esp += 4;
+                return;
+            }
+            uint32_t tag = kernel::R32(p + 4u);
+            if ((tag & 0xFF000000u) == target) break;
+            if (kernel::R32(p) == 0xFFFFFFFFu) p = kernel::R32(hdr + 0x40u);
+            else p += (tag & 0xFFFFFFu);
+        }
+    }
+    __imp__sub_000C1B30(ctx, base);
+}
+
 namespace game {
 namespace {
 

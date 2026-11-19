@@ -368,6 +368,7 @@ FePrompts CurrentFePrompts() {
         for (int i = 0; i < kFePromptCount; i++) p.shown[i] = true;
         p.label[kFePromptLT] = "L";  // no digits in a label: an action, not the map's "ZOOM 1.5X"
         p.label[kFePromptRT] = "R";
+        p.right_stick = true;        // Enable right stick in menus (car showcase rotation, map, etc.)
     }
     return p;
 }

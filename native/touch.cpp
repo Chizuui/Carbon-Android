@@ -516,7 +516,7 @@ enum class EditCategory : uint8_t { Race, Menu };
 EditCategory g_edit_cat = EditCategory::Race;
 std::atomic<bool> g_editing{false};
 Layout g_before = kRacing;
-Place g_menu_layout[14] = {
+Place g_menu_layout[15] = {
     {0.885f, 0.745f, 0.055f},  // A (bottom)
     {0.943f, 0.620f, 0.055f},  // B (right)
     {0.827f, 0.620f, 0.055f},  // X (left)
@@ -531,9 +531,10 @@ Place g_menu_layout[14] = {
     {0.835f, 0.875f, 0.045f},  // white
     {0.080f, 0.085f, 0.045f},  // lt (L)
     {0.920f, 0.085f, 0.045f},  // rt (R)
+    {0.700f, 0.620f, 0.090f},  // rstick (Analog R beside ABXY)
 };
-Place g_menu_before[14];
-constexpr Place kFeXbox[14] = {
+Place g_menu_before[15];
+constexpr Place kFeXbox[15] = {
     {0.885f, 0.745f, 0.055f},  // A (bottom)
     {0.943f, 0.620f, 0.055f},  // B (right)
     {0.827f, 0.620f, 0.055f},  // X (left)
@@ -548,10 +549,11 @@ constexpr Place kFeXbox[14] = {
     {0.835f, 0.875f, 0.045f},  // white
     {0.080f, 0.085f, 0.045f},  // lt (L)
     {0.920f, 0.085f, 0.045f},  // rt (R)
+    {0.700f, 0.620f, 0.090f},  // rstick (Analog R beside ABXY)
 };
-constexpr const char* kMenuSlotIds[14] = {
+constexpr const char* kMenuSlotIds[15] = {
     "a", "b", "x", "y", "dpad_up", "dpad_down", "dpad_left", "dpad_right",
-    "start", "back", "black", "white", "lt", "rt"
+    "start", "back", "black", "white", "lt", "rt", "rstick"
 };
 float g_before_opacity = 0.85f;
 int g_selected = -1;
@@ -596,7 +598,7 @@ void LoadLayout() {
     try {
         toml::table t = toml::parse_file(LayoutFile().string());
         g_layout = kRacing;
-        for (size_t i = 0; i < 14; i++) g_menu_layout[i] = kFeXbox[i];
+        for (size_t i = 0; i < 15; i++) g_menu_layout[i] = kFeXbox[i];
         for (size_t i = 0; i < game::kHudItems; i++)
             if (const toml::table* p = t["hud"][kHudIds[i]].as_table()) {
                 g_hud[i].x = float((*p)["x"].value_or(0.0));
@@ -625,7 +627,7 @@ void LoadLayout() {
             pl.hidden = (*p)["hidden"].value_or(false) && Hideable(int(i));
         }
         if (const toml::table* mc = t["menu_controls"].as_table()) {
-            for (size_t i = 0; i < 14; i++) {
+            for (size_t i = 0; i < 15; i++) {
                 if (const toml::table* p = (*mc)[kMenuSlotIds[i]].as_table()) {
                     Place& pl = g_menu_layout[i];
                     pl.x = std::clamp(float((*p)["x"].value_or(double(pl.x))), 0.0f, 1.0f);
@@ -647,7 +649,7 @@ void SaveLayout() {
                         toml::table{{"x", double(p.x)}, {"y", double(p.y)}, {"r", double(p.r)}, {"hidden", p.hidden}});
     }
     toml::table menu_controls;
-    for (size_t i = 0; i < 14; i++) {
+    for (size_t i = 0; i < 15; i++) {
         const Place& p = g_menu_layout[i];
         menu_controls.insert(kMenuSlotIds[i],
                              toml::table{{"x", double(p.x)}, {"y", double(p.y)}, {"r", double(p.r)}, {"hidden", p.hidden}});
@@ -668,7 +670,7 @@ void EnsureLayout() {
 
 void OpenEditor() {
     g_before = g_layout;
-    for (size_t i = 0; i < 14; i++) g_menu_before[i] = g_menu_layout[i];
+    for (size_t i = 0; i < 15; i++) g_menu_before[i] = g_menu_layout[i];
     g_before_opacity = g_opacity;
     g_hud_before = g_hud;
     g_selected = -1;
@@ -771,6 +773,7 @@ void DrawArt(ImDrawList* dl, const Art& a, ImVec2 c, float hh, ImU32 tint, float
 // a control's place: its layout's, or the FEng menus' Xbox layout for D-Pad + ABXY
 Place& MutablePlaceOf(size_t i) {
     if ((g_editing && g_edit_cat == EditCategory::Menu) || (!g_editing && FeMenu())) {
+        if (i == kRStick) return g_menu_layout[14];
         if (int m = FeMenuSlot(i); m >= 0) return g_menu_layout[m];
     }
     return g_layout[i];
@@ -841,7 +844,7 @@ int BarAt(float x, float y, float rect[4] = nullptr, int which = -1) {
 
 void ResetLayout() {
     if (g_edit_cat == EditCategory::Menu) {
-        for (size_t i = 0; i < 14; i++) g_menu_layout[i] = kFeXbox[i];
+        for (size_t i = 0; i < 15; i++) g_menu_layout[i] = kFeXbox[i];
     } else {
         g_layout = kRacing;
         g_hud = {};
@@ -856,7 +859,7 @@ void CloseEditor(bool keep) {
         SaveLayout();
     } else {
         g_layout = g_before;
-        for (size_t i = 0; i < 14; i++) g_menu_layout[i] = g_menu_before[i];
+        for (size_t i = 0; i < 15; i++) g_menu_layout[i] = g_menu_before[i];
         g_opacity = g_before_opacity;
         g_hud = g_hud_before;
         PublishHud();
@@ -908,6 +911,12 @@ bool InStickZone(float x) {
 
 // FIXED sticks: the one a touch came down near, its deflection from the centre; kPlaces for none
 size_t FixedStickAt(float x, float y) {
+    if (FeMenu()) {
+        if (g_menu_layout[14].hidden) return kPlaces;
+        float cx = g_menu_layout[14].x * Width(), cy = g_menu_layout[14].y * Height(), r = Radius(kRStick) * kFixedReach;
+        if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r) return kRStick;
+        return kPlaces;
+    }
     for (size_t s : {kStick, kRStick}) {
         if (g_layout[s].hidden) continue;
         float cx = g_layout[s].x * Width(), cy = g_layout[s].y * Height(), r = Radius(s) * kFixedReach;
@@ -1094,6 +1103,9 @@ void EditDown(Finger& f, float x, float y) {
             float sx = g_layout[s].x * Width(), sy = g_layout[s].y * Height(), sr = Radius(s);
             if (b == kPlaces && (x - sx) * (x - sx) + (y - sy) * (y - sy) <= sr * sr) b = s;
         }
+    } else if (b == kButtonCount && g_edit_cat == EditCategory::Menu) {
+        float sx = g_menu_layout[14].x * Width(), sy = g_menu_layout[14].y * Height(), sr = Radius(kRStick);
+        if ((x - sx) * (x - sx) + (y - sy) * (y - sy) <= sr * sr) b = kRStick;
     }
     // else a HUD item, under the controls (Race mode only)
     if (b == kPlaces || (b == kButtonCount && g_edit_cat == EditCategory::Menu)) {
@@ -1171,11 +1183,19 @@ void FingerDown(SDL_FingerID id, float x, float y) {
                 app::ToggleMenu();
             }
         }
-    } else if (FeMenu() && game::CurrentFePrompts().right_stick) {
-        f.role = Role::FeTap;  // FEng's pointer would click whatever the drag began on (the map's GPS)
     } else if (FeMenu()) {
-        f.role = Role::FeMouse;
-        FePointer(f, true);
+        size_t s = FixedStickAt(x, y);
+        if (s == kRStick) {
+            f.role = Role::Look;
+            f.x0 = g_menu_layout[14].x * Width();
+            f.y0 = g_menu_layout[14].y * Height();
+            StickOf(f, g_rstick_x, g_rstick_y, kRStick);
+        } else if (game::CurrentFePrompts().right_stick) {
+            f.role = Role::FeTap;
+        } else {
+            f.role = Role::FeMouse;
+            FePointer(f, true);
+        }
     } else if (g_fixed_sticks || g_layout[kStick].hidden) {
         // with no left stick (RACING) the gear lever is taken where it sits: floating, a thumb off a pedal shifted
         size_t s = FixedStickAt(x, y);
@@ -1531,13 +1551,14 @@ void DrawStickShapes(ImDrawList* dl, float th, ImVec2 at, float r, float sx, flo
 
 void DrawStick(ImDrawList* dl, float th, size_t stick) {
     // a hidden right stick: faint and crossed out in the editor, else not drawn
-    bool hidden = g_layout[stick].hidden;
+    const Place& pl = PlaceOf(stick);
+    bool hidden = pl.hidden;
     if (hidden && !g_editing) return;
     float opacity = g_opacity;
     if (hidden) g_opacity *= 0.4f;
     // at rest in its place, else where the thumb came down
     float r = Radius(stick);
-    ImVec2 at(g_layout[stick].x * Width(), g_layout[stick].y * Height());
+    ImVec2 at(pl.x * Width(), pl.y * Height());
     Role role = stick == kStick ? Role::Stick : Role::Look;
     float sx = stick == kStick ? g_stick_x : g_rstick_x, sy = stick == kStick ? g_stick_y : g_rstick_y;
     bool held = false;
@@ -1779,12 +1800,16 @@ void Draw() {
             dl->AddLine(ImVec2(cx - k, cy + k), ImVec2(cx + k, cy - k), IM_COL32(255, 80, 60, 220), th);
         }
     }
-    if ((editing && g_edit_cat == EditCategory::Race) || (!editing && !FeMenu() && !app::MenuOpen() && game::Racing()))
+    if ((editing && g_edit_cat == EditCategory::Race) || (!editing && !FeMenu() && !app::MenuOpen() && game::Racing())) {
         for (size_t s : {kStick, kRStick}) DrawStick(dl, th, s);
+    } else if ((editing && g_edit_cat == EditCategory::Menu) || (!editing && FeMenu())) {
+        DrawStick(dl, th, kRStick);
+    }
     if (editing) {
-        if (g_edit_cat == EditCategory::Race && g_selected >= 0 && IsStick(size_t(g_selected))) {
+        if (((g_edit_cat == EditCategory::Race && IsStick(size_t(g_selected))) ||
+             (g_edit_cat == EditCategory::Menu && size_t(g_selected) == kRStick)) && g_selected >= 0) {
             size_t s = size_t(g_selected);
-            ImVec2 at(g_layout[s].x * Width(), g_layout[s].y * h);
+            ImVec2 at(PlaceOf(s).x * Width(), PlaceOf(s).y * h);
             dl->AddCircle(at, Radius(s) + th * 2, IM_COL32(255, 200, 60, 255), 64, th * 1.5f);
         }
         DrawEditorBar(dl, th);

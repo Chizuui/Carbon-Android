@@ -1024,6 +1024,23 @@ void HudRect(size_t i, float& cx, float& cy, float& hw, float& hh) {
     hh = b.hh / 480.0f * f.h;
 }
 
+int GetHudBoxesUv(float* out_rects4) {
+    if (!out_rects4) return 0;
+    float wide = game::Aspect() >= 1.5f ? 480.0f * game::Aspect() : 640.0f;
+    for (size_t i = 0; i < game::kHudItems; i++) {
+        const game::HudBox& b = game::kHudBoxes[i];
+        float u_min = 0.5f + (b.x + g_hud[i].x - b.hw) / wide;
+        float u_max = 0.5f + (b.x + g_hud[i].x + b.hw) / wide;
+        float v_min = 0.5f + (b.y + g_hud[i].y - b.hh) / 480.0f;
+        float v_max = 0.5f + (b.y + g_hud[i].y + b.hh) / 480.0f;
+        out_rects4[i * 4 + 0] = std::clamp(u_min, 0.0f, 1.0f);
+        out_rects4[i * 4 + 1] = std::clamp(v_min, 0.0f, 1.0f);
+        out_rects4[i * 4 + 2] = std::clamp(u_max, 0.0f, 1.0f);
+        out_rects4[i * 4 + 3] = std::clamp(v_max, 0.0f, 1.0f);
+    }
+    return (int)game::kHudItems;
+}
+
 // the HUD item under a point, -1 for none
 int HitHud(float x, float y) {
     for (size_t i = 0; i < game::kHudItems; i++) {

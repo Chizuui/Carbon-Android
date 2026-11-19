@@ -61,6 +61,8 @@ void StepSteering(int step);
 bool TiltSteering();         // any thread: STEERING is TILT
 void EditLayout();  // the controls over the screen to drag where they go
 void LoadArt();     // main thread, once ImGui's context is made: the controls' art into its font atlas
+// Normalized HUD item bounding boxes in the frame UV (0..1, 0..1), returns count (up to 4)
+int GetHudBoxesUv(float* out_rects4);
 }  // namespace touch
 
 // steering by tilting the phone (gyro.cpp), main thread

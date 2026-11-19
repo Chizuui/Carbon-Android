@@ -635,9 +635,11 @@ int FeMenuSlot(size_t i) {
     if (press == kBit + 5) return 9;                                     // 9: Back (Select)
     if (press == 4) return 10;                                           // 10: Black
     if (press == 5) return 11;                                           // 11: White
+    if (press == kAnalogLT) return 12;                                   // 12: LT (top-left)
+    if (press == kAnalogRT) return 13;                                   // 13: RT (top-right)
     return -1;
 }
-constexpr Place kFeXbox[12] = {
+constexpr Place kFeXbox[14] = {
     {0.885f, 0.745f, 0.055f},  // A (bottom)
     {0.943f, 0.620f, 0.055f},  // B (right)
     {0.827f, 0.620f, 0.055f},  // X (left)
@@ -650,6 +652,8 @@ constexpr Place kFeXbox[12] = {
     {0.415f, 0.075f, 0.036f},  // back (select)
     {0.940f, 0.875f, 0.045f},  // black
     {0.835f, 0.875f, 0.045f},  // white
+    {0.080f, 0.085f, 0.045f},  // lt (L)
+    {0.920f, 0.085f, 0.045f},  // rt (R)
 };
 
 // the RACING layout's arrows and wheel show as STEERING picks them, in the editor too
@@ -1541,7 +1545,7 @@ void DrawControl(ImDrawList* dl, size_t i, bool on, int fade, float th) {
     ImU32 fill = on ? Fade(kSaffron, 120) : Fade(kGlass, 155 * fade / 100);
     switch (shape) {
         case Shape::Round: {
-            bool face = b.caption != nullptr;
+            bool face = b.caption != nullptr || b.press == 5;
             dl->AddCircleFilled(c, hh, on && face ? Fade(colour, 110) : fill, 48);
             dl->AddCircle(c, hh, face ? Fade(colour, 200 * fade / 100) : Fade(kEdge, 70 * fade / 100), 48,
                           th * (face ? 1.1f : 0.7f));

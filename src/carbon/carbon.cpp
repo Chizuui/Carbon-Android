@@ -112,24 +112,14 @@ void ApplyCheats() {
     if (mem::IsCommitted(kInfiniteSpeedbreaker))
         kernel::G<uint8_t>(kInfiniteSpeedbreaker) = o.cheat_speedbreaker ? 1 : 0;
     // the career's cash, [[[0x46A7CC] + 0xD4]] + 0x24310 (what the cash setter 0x9D3F0 adds to; the shop and the
-    // HUD read it): held at the cheat's amount while on, and given back as it was when turned off
-    static uint32_t cash_career = 0;
-    static uint32_t cash_saved = 0;
+    // HUD read it): held at 9,999,999 while on, and kept (spendable) when turned off
     uint32_t sys = IsCommittedRange(kCareerRoot, 4) ? kernel::R32(kCareerRoot) : 0;
     // [sys + 0xD4] is the career pointer array and [sys + 0xD8] is its element count (sub_0011B550).
     uint32_t count = IsCommittedRange(sys + 0xD8, 4) ? kernel::R32(sys + 0xD8) : 0;
     uint32_t list = (count > 0 && IsCommittedRange(sys + 0xD4, 4)) ? kernel::R32(sys + 0xD4) : 0;
     uint32_t career = IsCommittedRange(list, 4) ? kernel::R32(list) : 0;
-    if (cash_career && cash_career != career) cash_career = 0;
-    if (IsCommittedRange(career + kCashField, 4)) {
-        if (o.cheat_cash) {
-            if (!cash_career) cash_saved = kernel::R32(career + kCashField);
-            cash_career = career;
-            kernel::W32(career + kCashField, 9999999);
-        } else if (cash_career) {
-            kernel::W32(career + kCashField, cash_saved);
-            cash_career = 0;
-        }
+    if (o.cheat_cash && IsCommittedRange(career + kCashField, 4)) {
+        kernel::W32(career + kCashField, 9999999);
     }
     // the byte 28 unlock tests or in (0x2C6A60 answers true at once, the thing lists' lock tests 0x8A500, ...);
     // the game sets it itself only for one cheat entry (0x8FBB9) and from its boot (0x1EDA24), so it is held

@@ -147,15 +147,18 @@ float3 Vivid(float3 c) {
     c = lerp(Luma(c).xxx, c, 1.3);
     return lerp(c, smoothstep(0.0, 1.0, saturate(c)), 0.35);
 }
-// overbright colours held back: Reinhard's curve over the picture, the shadows' saturation kept and their lift taken
-// back down so they stay deep (a player's GLSL filter)
+// overbright colours held back: Reinhard-style filmic tone curve, shadow depth preserved safely
+// without negative color inversion or double gamma distortion
 float3 Hdr(float3 c) {
+    c = saturate(c);
     float l = dot(c, float3(0.2126, 0.7152, 0.0722));
     float shadow = 1.0 - smoothstep(0.0, 0.8, l);
-    c = lerp(l.xxx, c, 1.0 + shadow);
-    float3 mapped = pow(max(c / (c + 1.0), 0.0), 1.0 / 2.2);
-    c = lerp(c, mapped, 0.8);
-    return c * (1.0 - shadow * 0.5);
+    // boost saturation safely: clamp to 0 so extrapolate never flips colors negative
+    c = max(lerp(l.xxx, c, 1.0 + shadow * 0.4), 0.0);
+    // filmic tone mapping that preserves highlights and rich contrast
+    float3 mapped = (c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14);
+    c = lerp(c, saturate(mapped), 0.7);
+    return saturate(c * (1.0 - shadow * 0.25));
 }
 // dark between the frame's lines, as a TV's beam leaves them
 float Scan(float y, float depth) {

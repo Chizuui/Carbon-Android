@@ -422,6 +422,16 @@ uint32_t ConsoleLanguage() { return 1; }
 }  // namespace app
 
 // SearchForString overrides in Carbon:
+static void CleanUnlocalized(X86_CONTEXT& ctx) {
+    if (!ctx.eax || !mem::IsCommitted(ctx.eax)) return;
+    const char* str = (const char*)kernel::HostPtr(ctx.eax);
+    if (!str) return;
+    if (std::strcmp(str, "UNLOCALIZED") == 0 || std::strcmp(str, "Unlocalized") == 0 ||
+        std::strcmp(str, "*UNLOCALIZED*") == 0 || std::strcmp(str, "*Unlocalized*") == 0) {
+        ctx.eax = game::GuestText("");
+    }
+}
+
 // 1. sub_0011F9A0 (low-level binary search, hash in edx)
 X86_EXTERN_FUNC(__imp__sub_0011F9A0);
 X86_FUNC(sub_0011F9A0) {
@@ -444,6 +454,7 @@ X86_FUNC(sub_0011F9A0) {
         }
     }
     __imp__sub_0011F9A0(ctx, base);
+    CleanUnlocalized(ctx);
 }
 
 // 2. sub_0011FAB0 (high-level SearchForString, hash on stack [esp+4])
@@ -458,6 +469,7 @@ X86_FUNC(sub_0011FAB0) {
         }
     }
     __imp__sub_0011FAB0(ctx, base);
+    CleanUnlocalized(ctx);
 }
 
 // Screen Raindrops in Carbon: sub_00108690 ("Rain Drop" pass, cdecl, 1 arg, plain ret).

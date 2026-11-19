@@ -1024,6 +1024,8 @@ void HudRect(size_t i, float& cx, float& cy, float& hw, float& hh) {
     hh = b.hh / 480.0f * f.h;
 }
 
+}  // namespace
+
 int GetHudBoxesUv(float* out_rects4) {
     if (!out_rects4) return 0;
     float wide = game::Aspect() >= 1.5f ? 480.0f * game::Aspect() : 640.0f;
@@ -1040,6 +1042,8 @@ int GetHudBoxesUv(float* out_rects4) {
     }
     return (int)game::kHudItems;
 }
+
+namespace {
 
 // the HUD item under a point, -1 for none
 int HitHud(float x, float y) {

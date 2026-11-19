@@ -422,7 +422,7 @@ uint32_t ConsoleLanguage() { return 1; }
 }  // namespace app
 
 // SearchForString overrides in Carbon:
-static void CleanUnlocalized(X86_CONTEXT& ctx) {
+static void CleanUnlocalized(X86Context& ctx) {
     if (!ctx.eax || !mem::IsCommitted(ctx.eax)) return;
     const char* str = (const char*)kernel::HostPtr(ctx.eax);
     if (!str) return;

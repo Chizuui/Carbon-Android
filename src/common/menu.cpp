@@ -247,7 +247,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
-             kSkipMovies, kYellowTint, kMotionBlur, kShaderPreload, kBrightness };
+             kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kShaderPreload, kBrightness };
 
 using rows::Kind;
 using rows::Row;
@@ -279,6 +279,7 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kRainDrops, "SCREEN RAINDROPS"},
     {Kind::Value, kYellowTint, "YELLOW TINT"},
     {Kind::Value, kMotionBlur, "MOTION BLUR"},
+    {Kind::Value, kLightFlares, "LIGHT FLARES"},
     {Kind::Value, kScreenFilter, "SCREEN FILTER"},
 };
 
@@ -366,6 +367,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kRainDrops: return &o.rain_drops;
         case kYellowTint: return &o.yellow_tint;
         case kMotionBlur: return &o.motion_blur;
+        case kLightFlares: return &o.light_flares;
         case kShaderPreload: return &o.shader_preload;
         case kCheatNos: return &o.cheat_nos;
         case kCheatSpeedbreaker: return &o.cheat_speedbreaker;

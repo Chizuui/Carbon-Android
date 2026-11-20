@@ -41,6 +41,7 @@ struct Options {
     bool yellow_tint = false;  // the game's yellow colour grading, src/game/game.cpp greys it when off
     bool shader_preload = false;  // native/vulkan.cpp makes earlier runs' shaders and pipelines at the start
     bool motion_blur = true;   // the blur by speed and the nitrous' radial blur, src/game/game.cpp skips them when off
+    bool light_flares = false;  // the headlight, street light and neon flares, src/carbon/carbon.cpp skips eRenderLightFlares when off
     // cheats, src/game/game.cpp's ApplyCheats
     bool cheat_nos = false;           // the nitrous never runs out
     bool cheat_speedbreaker = false;  // the speedbreaker never runs out

@@ -480,9 +480,12 @@ X86_FUNC(sub_00108690) {
 }
 
 // Light Flares in Carbon: sub_0010EC90 ("eRenderLightFlares" pass, cdecl/0-arg, plain ret).
-// Bypassed to eliminate the giant green/white neon circles and connecting trails on Vulkan.
+// Off unless light_flares is on: on Vulkan the pass draws giant green/white neon circles and connecting trails.
+// The setting is the experiment for the missing headlights: the pass draws the headlight glow, and the d3d light
+// log shows whether the title sets spot lights for the road's pool at all.
 X86_EXTERN_FUNC(__imp__sub_0010EC90);
 X86_FUNC(sub_0010EC90) {
+    if (game::Opt().light_flares) return __imp__sub_0010EC90(ctx, base);
     ctx.esp += 4;
 }
 // Falling Rain in Carbon: sub_00278460 (thiscall, 2 args, ret 8)

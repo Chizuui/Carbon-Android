@@ -1087,6 +1087,17 @@ HLE_WRAP(D3DDevice_SetLight, 2) {
     if (i < 8 && l) {
         std::lock_guard<std::recursive_mutex> lock(g_lock);
         std::memcpy(g_state.lights[i].data(), HostPtr(l), 26 * 4);
+        // the headlight experiment: log a light when its type changes, so a night race shows whether the title
+        // sets spot lights at all (the road's pool) and where they point; position updates alone stay quiet
+        static uint32_t logged_type[8] = {9, 9, 9, 9, 9, 9, 9, 9};
+        uint32_t type = g_state.lights[i][0] & 3;
+        if (type != logged_type[i]) {
+            logged_type[i] = type;
+            float f[26];
+            std::memcpy(f, g_state.lights[i].data(), sizeof(f));
+            LOGR("d3d: light %u type %u pos (%.1f, %.1f, %.1f) dir (%.2f, %.2f, %.2f) range %.1f", i, type, f[13],
+                 f[14], f[15], f[16], f[17], f[18], f[19]);
+        }
     }
 }
 HLE_WRAP(D3DDevice_LightEnable, 2) {
@@ -1094,7 +1105,9 @@ HLE_WRAP(D3DDevice_LightEnable, 2) {
     uint32_t on = a[1];
     if (i < 8) {
         std::lock_guard<std::recursive_mutex> lock(g_lock);
+        uint32_t was = (g_state.light_enable >> i) & 1;
         g_state.light_enable = on ? g_state.light_enable | 1u << i : g_state.light_enable & ~(1u << i);
+        if (was != (on ? 1u : 0u)) LOGR("d3d: light %u %s type %u", i, on ? "on" : "off", g_state.lights[i][0] & 3);
     }
 }
 

@@ -1595,24 +1595,83 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                  stride);
         }
     }
-    // the headlight experiment: log the flare quads (quad list of 4, stride 28) so a night race shows whether
-    // the title already builds giant quads or the port blows them up in the vertex shader; the first few only,
-    // the pass draws one per light every frame
+    // the headlight experiment: the flare quads (quad list of 4, stride 28) come out giant on Vulkan, so log the
+    // first few and clamp each one to a quarter of the viewport; the log shows whether the title builds giant
+    // quads or small ones, the clamp keeps the streaks off the sky either way
+    const void* draw_vertices = vertices;
+    float clamped[28];
     if (prim == 8 && count == 4 && stride == 28) {
         static int flare_dumps = 0;
+        const uint8_t* b = static_cast<const uint8_t*>(vertices);
+        float v[4][7];
+        for (int i = 0; i < 4; i++) std::memcpy(v[i], b + i * stride, 28);
         if (flare_dumps < 6) {
             flare_dumps++;
-            const uint8_t* b = static_cast<const uint8_t*>(vertices);
             LOGR("d3d: flare quad vs %08X", g_state.vs_handle);
-            for (uint32_t v = 0; v < 4; v++) {
-                float f[7] = {};
-                std::memcpy(f, b + v * stride, 28);
-                LOGR("d3d: flare v%u %.1f %.1f %.1f %.1f col %08X uv %.3f %.3f", v, f[0], f[1], f[2], f[3],
-                     *reinterpret_cast<const uint32_t*>(&f[4]), f[5], f[6]);
+            for (int i = 0; i < 4; i++)
+                LOGR("d3d: flare v%u %.1f %.1f %.1f %.1f col %08X uv %.3f %.3f", i, v[i][0], v[i][1], v[i][2], v[i][3],
+                     *reinterpret_cast<const uint32_t*>(&v[i][4]), v[i][5], v[i][6]);
+        }
+        float vw = float(g_state.viewport.w), vh = float(g_state.viewport.h);
+        if (vw > 0 && vh > 0) {
+            float minx = v[0][0], maxx = v[0][0], miny = v[0][1], maxy = v[0][1];
+            for (int i = 1; i < 4; i++) {
+                minx = std::min(minx, v[i][0]);
+                maxx = std::max(maxx, v[i][0]);
+                miny = std::min(miny, v[i][1]);
+                maxy = std::max(maxy, v[i][1]);
+            }
+            float w = maxx - minx, h = maxy - miny;
+            float scale = 1.0f;
+            if (w > vw * 0.25f) scale = std::min(scale, vw * 0.25f / w);
+            if (h > vh * 0.25f) scale = std::min(scale, vh * 0.25f / h);
+            if (scale < 1.0f) {
+                float cx = (minx + maxx) * 0.5f, cy = (miny + maxy) * 0.5f;
+                for (int i = 0; i < 4; i++) {
+                    clamped[i * 7 + 0] = cx + (v[i][0] - cx) * scale;
+                    clamped[i * 7 + 1] = cy + (v[i][1] - cy) * scale;
+                    clamped[i * 7 + 2] = v[i][2];
+                    clamped[i * 7 + 3] = v[i][3];
+                    std::memcpy(&clamped[i * 7 + 4], &v[i][4], 12);
+                }
+                draw_vertices = clamped;
+                static int clamp_dumps = 0;
+                if (clamp_dumps < 6) {
+                    clamp_dumps++;
+                    LOGR("d3d: flare quad clamped %.0fx%.0f to %.0fx%.0f", w, h, w * scale, h * scale);
+                }
             }
         }
     }
-    g_state.streams[0] = {UpVertices(vertices, count * stride), stride};
+    // the flare streaks (triangle list, stride 24) are the other half of the pass; log the first few that span
+    // more than the viewport while their vertices sit at screen-space depth, so a night race shows whether the
+    // trails are the giant lines too
+    if (prim == 5 && stride == 24 && count >= 3 && count <= 96) {
+        static int trail_dumps = 0;
+        if (trail_dumps < 4) {
+            float vw = float(g_state.viewport.w), vh = float(g_state.viewport.h);
+            if (vw > 0 && vh > 0) {
+                const uint8_t* b = static_cast<const uint8_t*>(vertices);
+                float minx = 1e30f, maxx = -1e30f, miny = 1e30f, maxy = -1e30f;
+                bool screen = true;
+                for (uint32_t i = 0; i < count; i++) {
+                    float f[3];
+                    std::memcpy(f, b + i * stride, 12);
+                    if (f[2] < 0 || f[2] > 1) screen = false;
+                    minx = std::min(minx, f[0]);
+                    maxx = std::max(maxx, f[0]);
+                    miny = std::min(miny, f[1]);
+                    maxy = std::max(maxy, f[1]);
+                }
+                if (screen && (maxx - minx > vw || maxy - miny > vh)) {
+                    trail_dumps++;
+                    LOGR("d3d: trail? prim 5 count %u vs %08X bbox %.0f,%.0f %.0fx%.0f", count, g_state.vs_handle,
+                         minx, miny, maxx - minx, maxy - miny);
+                }
+            }
+        }
+    }
+    g_state.streams[0] = {UpVertices(draw_vertices, count * stride), stride};
     CountTarget(false, count);
     g_backend->Draw(g_state, prim, 0, count, nullptr);
     g_state.streams[0] = stream;

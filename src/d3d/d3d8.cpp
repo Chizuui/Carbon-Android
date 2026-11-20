@@ -1595,31 +1595,35 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                  stride);
         }
     }
-    // the headlight experiment: the flare quads (quad list of 4, stride 28) come out giant on Vulkan, so log the
-    // first few and clamp each one to a quarter of the viewport; the log shows whether the title builds giant
-    // quads or small ones, the clamp keeps the streaks off the sky either way
+    // the headlight experiment: the flare quads (quad list of 4, stride 28) come out giant on Vulkan, so clamp
+    // each one to a quarter of the viewport; a quad that fills its target exactly is a copy (the bloom
+    // downsample), not a flare, so it is left alone, as is any quad on a small render target
     const void* draw_vertices = vertices;
     float clamped[28];
     if (prim == 8 && count == 4 && stride == 28) {
-        static int flare_dumps = 0;
         const uint8_t* b = static_cast<const uint8_t*>(vertices);
         float v[4][7];
         for (int i = 0; i < 4; i++) std::memcpy(v[i], b + i * stride, 28);
-        if (flare_dumps < 6) {
-            flare_dumps++;
-            LOGR("d3d: flare quad vs %08X", g_state.vs_handle);
-            for (int i = 0; i < 4; i++)
-                LOGR("d3d: flare v%u %.1f %.1f %.1f %.1f col %08X uv %.3f %.3f", i, v[i][0], v[i][1], v[i][2], v[i][3],
-                     *reinterpret_cast<const uint32_t*>(&v[i][4]), v[i][5], v[i][6]);
-        }
         float vw = float(g_state.viewport.w), vh = float(g_state.viewport.h);
-        if (vw > 0 && vh > 0) {
-            float minx = v[0][0], maxx = v[0][0], miny = v[0][1], maxy = v[0][1];
-            for (int i = 1; i < 4; i++) {
-                minx = std::min(minx, v[i][0]);
-                maxx = std::max(maxx, v[i][0]);
-                miny = std::min(miny, v[i][1]);
-                maxy = std::max(maxy, v[i][1]);
+        float vx = float(g_state.viewport.x), vy = float(g_state.viewport.y);
+        float minx = v[0][0], maxx = v[0][0], miny = v[0][1], maxy = v[0][1];
+        for (int i = 1; i < 4; i++) {
+            minx = std::min(minx, v[i][0]);
+            maxx = std::max(maxx, v[i][0]);
+            miny = std::min(miny, v[i][1]);
+            maxy = std::max(maxy, v[i][1]);
+        }
+        bool fullscreen = vw > 0 && vh > 0 && minx >= vx - 2 && minx <= vx + 2 && miny >= vy - 2 && miny <= vy + 2 &&
+                          maxx >= vx + vw - 2 && maxx <= vx + vw + 2 && maxy >= vy + vh - 2 && maxy <= vy + vh + 2;
+        bool main_target = vw >= 320 && vh >= 240;
+        if (!fullscreen && main_target) {
+            static int flare_dumps = 0;
+            if (flare_dumps < 6) {
+                flare_dumps++;
+                LOGR("d3d: flare quad vs %08X", g_state.vs_handle);
+                for (int i = 0; i < 4; i++)
+                    LOGR("d3d: flare v%u %.1f %.1f %.1f %.1f col %08X uv %.3f %.3f", i, v[i][0], v[i][1], v[i][2],
+                         v[i][3], *reinterpret_cast<const uint32_t*>(&v[i][4]), v[i][5], v[i][6]);
             }
             float w = maxx - minx, h = maxy - miny;
             float scale = 1.0f;
@@ -1645,8 +1649,8 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
     }
     // the flare streaks (triangle list, stride 24) are the other half of the pass; log the first few that span
     // more than the viewport while their vertices sit at screen-space depth, so a night race shows whether the
-    // trails are the giant lines too
-    if (prim == 5 && stride == 24 && count >= 3 && count <= 96) {
+    // trails are the giant lines too; a single triangle is a fullscreen effect, not a trail
+    if (prim == 5 && stride == 24 && count >= 6 && count <= 96) {
         static int trail_dumps = 0;
         if (trail_dumps < 4) {
             float vw = float(g_state.viewport.w), vh = float(g_state.viewport.h);

@@ -1665,36 +1665,10 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
             }
         }
     }
-    // the flare pass draws its billboards as triangle fans (prim 7, count 4, stride 32) and its trails as single
-    // triangles (prim 5, count 3, stride 24); both come out giant on Vulkan, so shrink each one toward its
-    // centre while the flare pass runs, x/y only, leaving the rest alone; the fans are 3D billboards about
-    // three to seven units wide in world space and the trails are a 4x4 local template, and a tenth still left
-    // the buildings covered in vertical streaks, so the shrink is a fiftieth
+    // the fans and trails come out as static on Vulkan, so skip them outright while the flare pass runs; the
+    // prim 8 quad (the flare's core glow) still draws
     if (game::g_flare_pass && ((prim == 7 && count == 4 && stride == 32) || (prim == 5 && count == 3 && stride == 24))) {
-        const uint8_t* b = static_cast<const uint8_t*>(vertices);
-        float minx = 1e30f, maxx = -1e30f, miny = 1e30f, maxy = -1e30f;
-        for (uint32_t i = 0; i < count; i++) {
-            float f[2];
-            std::memcpy(f, b + i * stride, 8);
-            minx = std::min(minx, f[0]);
-            maxx = std::max(maxx, f[0]);
-            miny = std::min(miny, f[1]);
-            maxy = std::max(maxy, f[1]);
-        }
-        float cx = (minx + maxx) * 0.5f, cy = (miny + maxy) * 0.5f;
-        uint8_t clamped_fan[128];
-        std::memcpy(clamped_fan, vertices, count * stride);
-        for (uint32_t i = 0; i < count; i++) {
-            float* f = reinterpret_cast<float*>(clamped_fan + i * stride);
-            f[0] = cx + (f[0] - cx) * 0.02f;
-            f[1] = cy + (f[1] - cy) * 0.02f;
-        }
-        draw_vertices = clamped_fan;
-        static int fan_clamp_dumps = 0;
-        if (fan_clamp_dumps < 6) {
-            fan_clamp_dumps++;
-            LOGR("d3d: flare fan shrunk prim %u %.2fx%.2f", prim, maxx - minx, maxy - miny);
-        }
+        return;
     }
     // the flare streaks (triangle list, stride 24) are the other half of the pass; log the first few that span
     // more than the viewport while their vertices sit at screen-space depth, so a night race shows whether the

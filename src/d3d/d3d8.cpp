@@ -1667,9 +1667,9 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
     }
     // the flare pass draws its billboards as triangle fans (prim 7, count 4, stride 32) and its trails as single
     // triangles (prim 5, count 3, stride 24); both come out giant on Vulkan, so shrink each one toward its
-    // centre while the flare pass runs, x/y only, leaving the rest alone; the fans are 3D billboards, not
-    // screen-space quads, so their raw size is no guide to how big they land on screen and the shrink is a
-    // fixed quarter instead of a viewport cap
+    // centre while the flare pass runs, x/y only, leaving the rest alone; the fans are 3D billboards about
+    // seven units wide in world space and the trails are a 4x4 local template, and a quarter was not enough,
+    // so the shrink is a tenth
     if (game::g_flare_pass && ((prim == 7 && count == 4 && stride == 32) || (prim == 5 && count == 3 && stride == 24))) {
         const uint8_t* b = static_cast<const uint8_t*>(vertices);
         float minx = 1e30f, maxx = -1e30f, miny = 1e30f, maxy = -1e30f;
@@ -1686,8 +1686,8 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
         std::memcpy(clamped_fan, vertices, count * stride);
         for (uint32_t i = 0; i < count; i++) {
             float* f = reinterpret_cast<float*>(clamped_fan + i * stride);
-            f[0] = cx + (f[0] - cx) * 0.25f;
-            f[1] = cy + (f[1] - cy) * 0.25f;
+            f[0] = cx + (f[0] - cx) * 0.1f;
+            f[1] = cy + (f[1] - cy) * 0.1f;
         }
         draw_vertices = clamped_fan;
         static int fan_clamp_dumps = 0;

@@ -1072,6 +1072,50 @@ HLE_STDCALL(D3DDevice_SetTransform, 2) {
     std::memcpy(HostPtr(kDevice + kDevTransforms + t * 64), HostPtr(a[1]), 64);
     uint32_t pc = D3D8TransformType(t);
     std::memcpy(g_state.transforms[pc].data(), HostPtr(a[1]), 64);
+    // the headlights: the title never sets a D3D light, so the road ahead stays dark even with the flares on;
+    // add a spotlight that rides on the camera while racing, so the road ahead is lit like the reference shot
+    if (t == 0 && game::Racing()) {
+        const float* vm = g_state.transforms[2].data();
+        float fwd[3] = {vm[8], vm[9], vm[10]};
+        float len2 = fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2];
+        if (len2 > 0.25f) {
+            float cam[3];
+            cam[0] = -(vm[12] * vm[0] + vm[13] * vm[4] + vm[14] * vm[8]);
+            cam[1] = -(vm[12] * vm[1] + vm[13] * vm[5] + vm[14] * vm[9]);
+            cam[2] = -(vm[12] * vm[2] + vm[13] * vm[6] + vm[14] * vm[10]);
+            float pos[3] = {cam[0] + fwd[0] * 6.0f, cam[1] + fwd[1] * 6.0f, cam[2] + fwd[2] * 6.0f};
+            float l[26] = {};
+            l[0] = 2.0f;  // spot
+            l[1] = 1.0f;
+            l[2] = 1.0f;
+            l[3] = 0.95f;
+            l[4] = 1.0f;  // diffuse, warm white
+            l[13] = pos[0];
+            l[14] = pos[1];
+            l[15] = pos[2];
+            l[16] = fwd[0];
+            l[17] = fwd[1];
+            l[18] = fwd[2];
+            l[19] = 120.0f;  // range
+            l[20] = 1.0f;    // falloff
+            l[21] = 1.0f;
+            l[22] = 0.0f;
+            l[23] = 0.0f;  // attenuation
+            l[24] = 0.6f;  // theta
+            l[25] = 1.2f;  // phi
+            {
+                std::lock_guard<std::recursive_mutex> lock(g_lock);
+                std::memcpy(g_state.lights[0].data(), l, sizeof(l));
+                g_state.light_enable |= 1u;
+            }
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                LOGR("d3d: headlight spot pos (%.1f, %.1f, %.1f) dir (%.2f, %.2f, %.2f)", pos[0], pos[1], pos[2],
+                     fwd[0], fwd[1], fwd[2]);
+            }
+        }
+    }
     return 0;
 }
 
@@ -1728,6 +1772,44 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                     trail_dumps++;
                     LOGR("d3d: trail? prim 5 count %u vs %08X bbox %.0f,%.0f %.0fx%.0f", count, g_state.vs_handle,
                          minx, miny, maxx - minx, maxy - miny);
+                }
+            }
+        }
+    }
+    // a giant screen-space draw that spans far beyond the viewport is a broken streak, not a real effect: the
+    // mid-race ribbons appear with the flares off, so they are not the flare pass; log the first few and skip
+    // them, but leave a quad that fills its target exactly alone (a post-effect copy)
+    if (count >= 3 && count <= 256) {
+        float vw = float(g_state.viewport.w), vh = float(g_state.viewport.h);
+        if (vw > 0 && vh > 0) {
+            const uint8_t* b = static_cast<const uint8_t*>(draw_vertices);
+            float minx = 1e30f, maxx = -1e30f, miny = 1e30f, maxy = -1e30f;
+            bool screen = true;
+            for (uint32_t i = 0; i < count; i++) {
+                float f[3];
+                std::memcpy(f, b + i * stride, 12);
+                if (f[2] < 0 || f[2] > 1) {
+                    screen = false;
+                    break;
+                }
+                minx = std::min(minx, f[0]);
+                maxx = std::max(maxx, f[0]);
+                miny = std::min(miny, f[1]);
+                maxy = std::max(maxy, f[1]);
+            }
+            if (screen) {
+                float vx = float(g_state.viewport.x), vy = float(g_state.viewport.y);
+                bool fullscreen = minx >= vx - 2 && minx <= vx + 2 && miny >= vy - 2 && miny <= vy + 2 &&
+                                  maxx >= vx + vw - 2 && maxx <= vx + vw + 2 && maxy >= vy + vh - 2 &&
+                                  maxy <= vy + vh + 2;
+                if (!fullscreen && (maxx - minx > vw * 1.5f || maxy - miny > vh * 1.5f)) {
+                    static int giant_dumps = 0;
+                    if (giant_dumps < 12) {
+                        giant_dumps++;
+                        LOGR("d3d: giant? prim %u count %u stride %u vs %08X bbox %.0f,%.0f %.0fx%.0f", prim, count,
+                             stride, g_state.vs_handle, minx, miny, maxx - minx, maxy - miny);
+                    }
+                    return;
                 }
             }
         }

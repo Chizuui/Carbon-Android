@@ -1595,6 +1595,23 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                  stride);
         }
     }
+    // the headlight experiment: log the flare quads (quad list of 4, stride 28) so a night race shows whether
+    // the title already builds giant quads or the port blows them up in the vertex shader; the first few only,
+    // the pass draws one per light every frame
+    if (prim == 8 && count == 4 && stride == 28) {
+        static int flare_dumps = 0;
+        if (flare_dumps < 6) {
+            flare_dumps++;
+            const uint8_t* b = static_cast<const uint8_t*>(vertices);
+            LOGR("d3d: flare quad vs %08X", g_state.vs_handle);
+            for (uint32_t v = 0; v < 4; v++) {
+                float f[7] = {};
+                std::memcpy(f, b + v * stride, 28);
+                LOGR("d3d: flare v%u %.1f %.1f %.1f %.1f col %08X uv %.3f %.3f", v, f[0], f[1], f[2], f[3],
+                     *reinterpret_cast<const uint32_t*>(&f[4]), f[5], f[6]);
+            }
+        }
+    }
     g_state.streams[0] = {UpVertices(vertices, count * stride), stride};
     CountTarget(false, count);
     g_backend->Draw(g_state, prim, 0, count, nullptr);

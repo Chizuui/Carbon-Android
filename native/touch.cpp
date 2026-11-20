@@ -412,14 +412,14 @@ struct Button {
 };
 // the layout is set in the settings panel (TOUCH CONTROLS): its steering, opacity, size, and the editor that moves the
 // controls, see the functions at the end. A Text control shows its label.
-// the face buttons' captions are Most Wanted's own controls, as its loading screen shows them
+// the face buttons' captions are Carbon's controls (Y: Crew Member, A: Handbrake, B: Nitrous, X: Speedbreaker, Black: Shift Up, White: Shift Down)
 constexpr Button kButtons[] = {
     {"a", "A", Icon::Text, kAnalogA, Shape::Round, "E-BRAKE"},
     {"b", "B", Icon::Text, kAnalogB, Shape::Round, "NITROUS"},
     {"x", "X", Icon::Text, kAnalogX, Shape::Round, "SPEEDBREAKER"},
-    {"y", "Y", Icon::Text, kAnalogY, Shape::Round, "LOOK BACK"},
-    {"black", "BLACK", Icon::Text, 4, Shape::Tab, "CAMERA"},
-    {"white", "WHITE", Icon::Text, 5, Shape::Round},
+    {"y", "Y", Icon::Text, kAnalogY, Shape::Round, "CREW MEMBER"},
+    {"black", "BLACK", Icon::Text, 4, Shape::Tab, "SHIFT UP"},
+    {"white", "WHITE", Icon::Text, 5, Shape::Round, "SHIFT DOWN"},
     {"lt", "LT", Icon::Text, kAnalogLT, Shape::Tab},
     {"rt", "RT", Icon::Text, kAnalogRT, Shape::Tab},
     {"start", "START", Icon::Text, kBit + 4, Shape::Pill},
@@ -1211,9 +1211,8 @@ void FingerDown(SDL_FingerID id, float x, float y) {
             f.x0 = g_menu_layout[14].x * Width();
             f.y0 = g_menu_layout[14].y * Height();
             StickOf(f, g_rstick_x, g_rstick_y, kRStick);
-        } else if (game::CurrentFePrompts().right_stick) {
-            f.role = Role::FeTap;
         } else {
+            // In menus, route touches as FeMouse by default so taps, clicks, and gestures/swipes work
             f.role = Role::FeMouse;
             FePointer(f, true);
         }
@@ -1432,6 +1431,12 @@ void Apply(int port, input::Pad& pad) {
     if (g_steering == Steering::Wheel) steer += g_wheel_turn / kWheelLock;
     if (g_steering == Steering::Tilt && !FeMenu() && !app::MenuOpen()) steer += gyro::Steer();
     float sx = std::clamp(g_stick_x + steer, -1.0f, 1.0f);
+    if (FeMenu()) {
+        // In FEng menus / Autosculpt customization, if D-Pad Left/Right is pressed, also reflect in pad.lx
+        // so analog sliders (Zone 1, Zone 2) adjust seamlessly along with D-Pad
+        if (g_pressed[13]) sx = -1.0f;       // dpad_left
+        else if (g_pressed[14]) sx = 1.0f;  // dpad_right
+    }
     if (sx || g_stick_y) {
         used = true;
         pad.lx = int16_t(sx * 32767.0f);
@@ -1589,11 +1594,13 @@ void DrawStick(ImDrawList* dl, float th, size_t stick) {
             held = true;
         }
     const Art* ring = FindArt("stick_ring");
-    const Art* knob_art = FindArt(stick == kStick ? "stick_knob" : "stick_shift");
+    // In menu or look mode, right stick uses a standard knob instead of a transmission gear shift lever
+    bool is_gear_shift = (stick == kRStick && !FeMenu() && !(g_editing && g_edit_cat == EditCategory::Menu));
+    const Art* knob_art = FindArt(is_gear_shift ? "stick_shift" : "stick_knob");
     if (ring && knob_art) {
-        // the left stick a ring with a knob; the right one, which shifts gears, the gear lever moved by the thumb
+        // the left stick a ring with a knob; the right one, which shifts gears in race, the gear lever moved by the thumb
         ImVec2 knob(at.x + sx * r * 0.45f, at.y - sy * r * 0.45f);
-        if (stick == kStick) {
+        if (stick == kStick || !is_gear_shift) {
             DrawArt(dl, *ring, at, r, ArtTint(false, 100));
             DrawArt(dl, *knob_art, knob, r * 0.42f, ArtTint(held, 100));
         } else {

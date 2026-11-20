@@ -23,6 +23,7 @@
 #include "gpu/backend.h"
 #include "gpu/texture.h"
 #include "gpu/vertex.h"
+#include "kernel/memory.h"
 #include "xdk/d3d8.h"
 #include "xdk/hle.h"
 #include "xdk/layout.h"
@@ -773,6 +774,36 @@ void RotateBuffers() {
     W32(g_buffers[0] + kResLock, lock);
 }
 
+// how many swaps followed the title's headers, and how many fell back to rotating the host copies
+uint64_t g_synced_swaps = 0, g_rotated_swaps = 0;
+
+// the title may trade its own buffer headers' memory before each Swap, as Most Wanted does at 0x0C8DA3 for the
+// textures its visual treatment reads: the host copies then have to follow the title's headers, or the treatment
+// samples the buffer being drawn instead of the finished one and the scene goes black every other frame, the
+// directly drawn UI steady on top. copy the title's current data pointers into the host copies, in the same
+// mapping as CopyTitleBuffers; true when any of them moved, so the caller rotates only when the title did not
+bool SyncTitleBuffers() {
+    if (g_buffer_count < 2) return false;
+    for (uint32_t i = 0; i < g_buffer_count; i++)
+        if (!g_buffers_titles[i]) return false;
+    uint32_t data[3] = {}, lock[3] = {};
+    for (uint32_t i = 0; i < g_buffer_count; i++) {
+        uint32_t src = g_present.surfaces[i == 0 ? g_buffer_count - 1 : i - 1];
+        if (!src || !mem::IsCommitted(src + 11)) return false;
+        uint32_t d = R32(src + kResData);
+        if (!d) return false;
+        data[i] = d;
+        lock[i] = R32(src + kResLock);
+    }
+    bool changed = false;
+    for (uint32_t i = 0; i < g_buffer_count; i++) {
+        if (R32(g_buffers[i] + kResData) != data[i]) changed = true;
+        W32(g_buffers[i] + kResData, data[i]);
+        W32(g_buffers[i] + kResLock, lock[i]);
+    }
+    return changed;
+}
+
 // perf diagnostic: once a second, where the frames' time went, per frame. The title's own time is what is left of its
 // frame after waiting on the render thread, the GPU and the cap
 using PerfClock = std::chrono::steady_clock;
@@ -874,7 +905,25 @@ HLE_STDCALL(D3DDevice_Swap, 1) {
     if (diag::Perf())
         LogPerf(gpu_wait_ns,
                 uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(PerfClock::now() - paced).count()));
-    RotateBuffers();
+    // follow the title's own buffer headers when it traded them, else rotate the host copies as before: a title
+    // that trades and a host that also rotates read different buffers on alternate frames
+    if (SyncTitleBuffers())
+        g_synced_swaps++;
+    else {
+        RotateBuffers();
+        g_rotated_swaps++;
+    }
+    if (g_presents % 120 == 0) {
+        uint32_t title_data[3] = {}, host_data[3] = {};
+        for (uint32_t i = 0; i < g_buffer_count; i++) {
+            uint32_t src = g_present.surfaces[i == 0 ? g_buffer_count - 1 : i - 1];
+            title_data[i] = src && mem::IsCommitted(src + 7) ? R32(src + kResData) : 0;
+            host_data[i] = R32(g_buffers[i] + kResData);
+        }
+        LOGR("d3d: swap %u title buffers %08X %08X %08X host buffers %08X %08X %08X rt %08X synced %llu rotated %llu",
+             uint32_t(g_presents), title_data[0], title_data[1], title_data[2], host_data[0], host_data[1],
+             host_data[2], g_state.rt.data, (unsigned long long)g_synced_swaps, (unsigned long long)g_rotated_swaps);
+    }
     g_state.rt = SurfaceOf(Dev(kDevRenderTarget));
     uint32_t n = Dev(kDevSwapCount) + 1;
     SetDev(kDevSwapCount, n);

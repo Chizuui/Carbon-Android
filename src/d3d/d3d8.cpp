@@ -1657,6 +1657,44 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
             }
         }
     }
+    // the flare pass draws its billboards as triangle fans (prim 7, count 4, stride 32) and its trails as single
+    // triangles (prim 5, count 3, stride 24); both come out giant on Vulkan, so clamp each one to a quarter of
+    // the viewport while the flare pass runs, shrinking x/y toward its centre and leaving the rest alone
+    if (game::g_flare_pass && ((prim == 7 && count == 4 && stride == 32) || (prim == 5 && count == 3 && stride == 24))) {
+        const uint8_t* b = static_cast<const uint8_t*>(vertices);
+        float minx = 1e30f, maxx = -1e30f, miny = 1e30f, maxy = -1e30f;
+        for (uint32_t i = 0; i < count; i++) {
+            float f[2];
+            std::memcpy(f, b + i * stride, 8);
+            minx = std::min(minx, f[0]);
+            maxx = std::max(maxx, f[0]);
+            miny = std::min(miny, f[1]);
+            maxy = std::max(maxy, f[1]);
+        }
+        float vw = float(g_state.viewport.w), vh = float(g_state.viewport.h);
+        if (vw > 0 && vh > 0) {
+            float w = maxx - minx, h = maxy - miny;
+            float scale = 1.0f;
+            if (w > vw * 0.25f) scale = std::min(scale, vw * 0.25f / w);
+            if (h > vh * 0.25f) scale = std::min(scale, vh * 0.25f / h);
+            if (scale < 1.0f) {
+                float cx = (minx + maxx) * 0.5f, cy = (miny + maxy) * 0.5f;
+                uint8_t clamped_fan[128];
+                std::memcpy(clamped_fan, vertices, count * stride);
+                for (uint32_t i = 0; i < count; i++) {
+                    float* f = reinterpret_cast<float*>(clamped_fan + i * stride);
+                    f[0] = cx + (f[0] - cx) * scale;
+                    f[1] = cy + (f[1] - cy) * scale;
+                }
+                draw_vertices = clamped_fan;
+                static int fan_clamp_dumps = 0;
+                if (fan_clamp_dumps < 6) {
+                    fan_clamp_dumps++;
+                    LOGR("d3d: flare fan clamped prim %u %.0fx%.0f to %.0fx%.0f", prim, w, h, w * scale, h * scale);
+                }
+            }
+        }
+    }
     // the flare streaks (triangle list, stride 24) are the other half of the pass; log the first few that span
     // more than the viewport while their vertices sit at screen-space depth, so a night race shows whether the
     // trails are the giant lines too; a single triangle is a fullscreen effect, not a trail

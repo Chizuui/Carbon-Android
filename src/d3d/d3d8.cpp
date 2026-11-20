@@ -1595,6 +1595,16 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                  stride);
         }
     }
+    // the flare pass (sub_0010EC90) draws its quads and trails here; log what it actually draws, so the next
+    // clamp targets the real pattern instead of the bloom copies
+    if (game::g_flare_pass) {
+        static int flare_pass_dumps = 0;
+        if (flare_pass_dumps < 12) {
+            flare_pass_dumps++;
+            LOGR("d3d: flare pass draw prim %u count %u stride %u vs %08X vp %ux%u", prim, count, stride,
+                 g_state.vs_handle, g_state.viewport.w, g_state.viewport.h);
+        }
+    }
     // the headlight experiment: the flare quads (quad list of 4, stride 28) come out giant on Vulkan, so clamp
     // each one to a quarter of the viewport; a quad that fills its target exactly is a copy (the bloom
     // downsample), not a flare, so it is left alone, as is any quad on a small render target

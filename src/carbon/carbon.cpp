@@ -485,7 +485,12 @@ X86_FUNC(sub_00108690) {
 // log shows whether the title sets spot lights for the road's pool at all.
 X86_EXTERN_FUNC(__imp__sub_0010EC90);
 X86_FUNC(sub_0010EC90) {
-    if (game::Opt().light_flares) return __imp__sub_0010EC90(ctx, base);
+    if (game::Opt().light_flares) {
+        game::g_flare_pass = true;
+        __imp__sub_0010EC90(ctx, base);
+        game::g_flare_pass = false;
+        return;
+    }
     ctx.esp += 4;
 }
 // Falling Rain in Carbon: sub_00278460 (thiscall, 2 args, ret 8)

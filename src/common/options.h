@@ -62,6 +62,7 @@ inline std::atomic<uint32_t> g_road_reflection{0};  // the road reflection targe
 inline std::atomic<uint32_t> g_env_cube{0};         // the cars' reflection cube's data, the same
 inline std::atomic<bool> g_focus_paused{false};  // the game thread waits while the app is in the background
 inline std::atomic<uint32_t> g_focus_pauses{0};  // focus pauses ended so far
+inline std::atomic<bool> g_flare_pass{false};  // the eRenderLightFlares pass is running; d3d logs its draws
 void WaitWhileUnfocused();  // native/game_host.cpp: game thread, before the present
 void WidenAspect();         // src/game/game.cpp: game thread, at each present
 void ApplyGraphicsSwitches();  // src/game/game.cpp: game thread, at each present

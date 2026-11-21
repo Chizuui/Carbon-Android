@@ -678,6 +678,29 @@ X86_FUNC(sub_00242FD0) {
     __imp__sub_00242FD0(ctx, base);
 }
 
+// Guard the car-stat read (0x2881C0) against the garbage [esi+0x08] pointer left behind when the
+// career's car_db is empty (see the 0x242FD0 guard above): without a valid car the game builds a
+// car object whose +0x08 slot is 0x100000000, and [edx+0x1C] faults (SIGSEGV, addr 0x10000001c).
+// Returning 0 is safe: the caller (0x288240) stores it and copies 0 bytes.
+X86_EXTERN_FUNC(__imp__sub_002881C0);
+X86_FUNC(sub_002881C0) {
+    uint32_t obj = ctx.ecx;
+    if (!game::IsCommittedRange(obj, 0x20u)) {
+        LOGR("career: sub_002881C0 bad obj %08X", obj);
+        ctx.eax = 0;
+        ctx.esp += 12;  // ret 8: return address + 2 args
+        return;
+    }
+    uint32_t inner = kernel::R32(obj + 0x08u);
+    if (!game::IsCommittedRange(inner, 0x20u)) {
+        LOGR("career: sub_002881C0 bad [obj+8] %08X (obj %08X)", inner, obj);
+        ctx.eax = 0;
+        ctx.esp += 12;
+        return;
+    }
+    __imp__sub_002881C0(ctx, base);
+}
+
 // Guard STRM ring-buffer walk (0xC1B30) against uncommitted guest pointers on the background streamer thread.
 X86_EXTERN_FUNC(__imp__sub_000C1B30);
 X86_FUNC(sub_000C1B30) {

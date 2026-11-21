@@ -952,9 +952,6 @@ struct FeQueue {
     bool down = false;
 } g_fe_queue;
 
-// a tap's A waits this long, for FEng's mouse to have answered it if it does (src/game/fe_mouse.cpp's FeTakeAccept)
-constexpr uint64_t kFeAcceptMs = 150;
-uint64_t g_fe_accept_at = 0;
 bool g_panel_after_pause = false;  // the gear's Start is queued: the settings panel opens when it is out
 
 void FeQueuePresses(int press, int count) {
@@ -980,14 +977,13 @@ int FeQueuePress() {
     return q.press;
 }
 
-// a finger lifted from a FEng menu: a swipe steps the dpad, a tap that came down on the highlighted item presses A
+// a finger lifted from a FEng menu: a swipe steps the dpad, a tap only highlights the item it came down on (the
+// mouse already did that) — it no longer presses A 150 ms later, so choosing a car after a boss, or a letter while
+// typing a name, does not also confirm it; confirming is the A button's job alone
 void FeSwipe(const Finger& f) {
     float h = Height(), dx = f.x - f.x0, dy = f.y - f.y0;
     float along = std::max(std::fabs(dx), std::fabs(dy));
-    if (along < kSwipe * h) {
-        g_fe_accept_at = NowMs() + kFeAcceptMs;
-        return;
-    }
+    if (along < kSwipe * h) return;
     game::FeTakeStart();
     game::FeTakeAccept();  // a swipe accepts nothing
     int steps = std::clamp(int(along / (kSwipeStep * h) + 0.5f), 1, kMaxSwipeSteps);
@@ -1396,11 +1392,6 @@ void Apply(int port, input::Pad& pad) {
         used = true;
         if (p < kBit) pad.analog[p] = 0xFF;
         else pad.buttons |= uint16_t(1u << (p - kBit));
-    }
-    if (g_fe_accept_at && NowMs() >= g_fe_accept_at) {
-        g_fe_accept_at = 0;
-        if (game::FeTakeStart()) FeQueuePresses(input::kStart, 1);
-        else if (game::FeTakeAccept()) FeQueuePresses(kAnalogA, 1);
     }
     if (int p = FeQueuePress(); p >= 0) {
         used = true;

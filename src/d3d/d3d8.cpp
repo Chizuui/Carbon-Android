@@ -1618,7 +1618,6 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
     // downsample), not a flare, so it is left alone, as is any quad on a small render target
     const void* draw_vertices = vertices;
     float clamped[28];
-    float enlarged[28];
     if (prim == 8 && count == 4 && stride == 28) {
         const uint8_t* b = static_cast<const uint8_t*>(vertices);
         float v[4][7];
@@ -1667,13 +1666,16 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
         }
     }
     // the fans and trails come out as static on Vulkan, so skip them outright while the flare pass runs; the
-    // prim 8 quad (the flare's core glow) still draws
+    // fullscreen composite quad is skipped below for the same reason
     if (game::g_flare_pass && ((prim == 7 && count == 4 && stride == 32) || (prim == 5 && count == 3 && stride == 24))) {
         return;
     }
-    // the flare pass still draws one prim 8 quad per light, the flare's core glow, but it is too small to see
-    // from the chase camera, so enlarge it while the flare pass runs when it is a small quad, x/y only around
-    // its centre; a fullscreen quad is a copy, not a glow, so it is left alone
+    // the flare pass ends with a fullscreen composite quad (one 640x480, or two 640x240 halves in the loop
+    // path): a textured overlay over the whole frame. Carbon's real headlight glow is the fan billboard,
+    // skipped above because it comes out as static on Vulkan, so with nothing underneath the composite only
+    // washes the screen white. Skip it outright while the flare pass runs. There is no small prim-8 core
+    // glow in Carbon to enlarge (the earlier 3x enlargement targeted a glow that does not exist), so that
+    // code is gone; a fullscreen quad here is the composite, not a glow
     if (game::g_flare_pass && prim == 8 && count == 4 && stride == 28) {
         const uint8_t* b = static_cast<const uint8_t*>(draw_vertices);
         float v[4][7];
@@ -1687,21 +1689,8 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
             maxy = std::max(maxy, v[i][1]);
         }
         float w = maxx - minx, h = maxy - miny;
-        static int glow_dumps = 0;
-        if (glow_dumps < 6) {
-            glow_dumps++;
-            LOGR("d3d: flare core %.0fx%.0f", w, h);
-        }
-        if (vw > 0 && vh > 0 && w < vw * 0.25f && h < vh * 0.25f) {
-            float cx = (minx + maxx) * 0.5f, cy = (miny + maxy) * 0.5f;
-            for (int i = 0; i < 4; i++) {
-                enlarged[i * 7 + 0] = cx + (v[i][0] - cx) * 3.0f;
-                enlarged[i * 7 + 1] = cy + (v[i][1] - cy) * 3.0f;
-                enlarged[i * 7 + 2] = v[i][2];
-                enlarged[i * 7 + 3] = v[i][3];
-                std::memcpy(&enlarged[i * 7 + 4], &v[i][4], 12);
-            }
-            draw_vertices = enlarged;
+        if (vw > 0 && vh > 0 && w >= vw * 0.9f && h >= vh * 0.4f) {
+            return;
         }
     }
     // the flare streaks (triangle list, stride 24) are the other half of the pass; log the first few that span

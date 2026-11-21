@@ -1830,7 +1830,9 @@ void Draw() {
     }
     if ((editing && g_edit_cat == EditCategory::Race) || (!editing && !FeMenu() && !app::MenuOpen() && game::Racing())) {
         for (size_t s : {kStick, kRStick}) DrawStick(dl, th, s);
-    } else if ((editing && g_edit_cat == EditCategory::Menu) || (!editing && FeMenu())) {
+    } else if ((editing && g_edit_cat == EditCategory::Menu) || (!editing && FeMenu() && !app::MenuOpen())) {
+        // the front-end menu's right stick, for navigating the game's own menus; hidden while the settings panel
+        // is open, or it draws over the panel (the analog "tembus" the player sees)
         DrawStick(dl, th, kRStick);
     }
     if (editing) {

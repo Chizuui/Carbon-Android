@@ -1,0 +1,17 @@
+# Changelog — NFS Carbon Android (`carbon-port`)
+
+- YELLOW TINT dihapus dari menu Carbon — setting itu mati, tidak ada efek di Carbon.
+- RENDER RESOLUTION menampilkan ukuran 3D yang benar (sebelumnya lebar dilebih-lebihkan 4/3x).
+- BLOOM OFF sekarang mematikan seluruh rantai bloom, bukan cuma add-back — preset low-end lebih hemat GPU.
+- Composite fullscreen di flare pass di-skip — sumber kabut putih saat LIGHT FLARES on.
+- Preset MID dan HIGH ditambah di samping LOW-END (DISPLAY > PERFORMANCE).
+- Preset LOW-END: sekali tap set render 50%, bloom off, motion blur off, reflections QUARTER, filter off.
+- Present shader lebih murah: gamma pakai LUT, tidak ada pow() per piksel lagi.
+- Reflection cube dibatasi ke skala efek — tidak render 6 view di resolusi penuh lagi.
+- Jejak kotak hitam di HUD (minimap, EA Trax, race info, speedometer) dihilangkan — latar panel ikut terang.
+- Guard giant-streak dan spotlight headlight dihapus — guard malah merusak pause blur dan fade.
+- Fan dan trail flare di-skip — gambar statik di Vulkan hilang, layar bersih.
+- Boss Bonus Cards tidak flicker disco lagi — host mengikuti buffer header title di Swap.
+- Kotak hitam di HUD diperbaiki — mask kecerahan digate ke luma piksel.
+- LIGHT FLARES digate ke setting (default OFF) — tidak ada efek kalau mati.
+- Menu analog knob dan D-Pad diperbaiki, caption Carbon diperbarui.

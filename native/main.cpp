@@ -289,6 +289,7 @@ toml::table Table() {
                   {"fps_cap", int64_t(s.fps_cap)},
                   {"vsync", s.vsync},
                   {"anisotropic_filtering", int64_t(s.aniso)},
+                  {"deadzone", int64_t(s.deadzone)},
                   {"join_ip", s.join_ip},
                   {"defaults", int64_t(kDefaults)}};
     for (const Option& o : kGame.options) {
@@ -340,6 +341,8 @@ void Load() {
     s.fps_cap = t["fps_cap"].value_or(s.fps_cap);
     s.vsync = t["vsync"].value_or(s.vsync);
     s.aniso = t["anisotropic_filtering"].value_or(s.aniso);
+    s.deadzone = t["deadzone"].value_or(s.deadzone);
+    if (s.deadzone > 50) s.deadzone = 50;
     s.join_ip = t["join_ip"].value_or(s.join_ip);
     if (t["defaults"].value_or(int64_t(0)) < kDefaults) PhoneFrameDefaults(s);
     for (const Option& o : kGame.options) {

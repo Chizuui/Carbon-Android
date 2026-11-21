@@ -22,6 +22,7 @@ struct Settings {
     uint32_t fps_cap = 60;           // 0 unlimited
     bool vsync = true;
     uint32_t aniso = 0;              // 0 as the game asks
+    uint32_t deadzone = 0;           // the sticks' dead zone, percent of full deflection; 0 is none
     std::string join_ip;                   // co-op: a host past the LAN the system link search also asks
 };
 

@@ -8,6 +8,7 @@
 #include <ctime>
 #include <cwchar>
 #include <filesystem>
+#include <initializer_list>
 #include <iterator>
 #include <map>
 #include <string>
@@ -110,26 +111,32 @@ void ExportLog() {
     LOGR("export log: %s -> %s", src.string().c_str(), dst.string().c_str());
 }
 
-// gold on a dark red
-constexpr ImVec4 kPanelBg{0.045f, 0.02f, 0.02f, 0.94f};
+// near-black warm panel, gold on dark red kept from the old panel, red only for the active nav and selections
+constexpr ImVec4 kPanelBg{0.055f, 0.05f, 0.045f, 0.97f};
 constexpr ImVec4 kBorder{0.80f, 0.62f, 0.22f, 0.85f};
 constexpr ImVec4 kText{0.92f, 0.88f, 0.82f, 1.0f};
 constexpr ImVec4 kHighlight{0.42f, 0.07f, 0.05f, 1.0f};
 constexpr ImVec4 kHeading{0.92f, 0.72f, 0.28f, 1.0f};
 constexpr ImVec4 kDim{0.64f, 0.56f, 0.50f, 1.0f};
-constexpr ImVec4 kTab{0.14f, 0.05f, 0.04f, 1.0f};
-constexpr ImVec4 kTabHovered{0.26f, 0.07f, 0.05f, 1.0f};
-constexpr ImVec4 kButton{0.22f, 0.06f, 0.04f, 1.0f};
+constexpr ImVec4 kTab{0.10f, 0.09f, 0.08f, 1.0f};
+constexpr ImVec4 kTabHovered{0.16f, 0.13f, 0.10f, 1.0f};
+constexpr ImVec4 kButton{0.16f, 0.13f, 0.11f, 1.0f};
 // lighter than the highlight, so it shows on a selected row
-constexpr ImVec4 kButtonHovered{0.58f, 0.12f, 0.08f, 1.0f};
+constexpr ImVec4 kButtonHovered{0.35f, 0.22f, 0.10f, 1.0f};
 constexpr ImVec4 kLine{0.92f, 0.72f, 0.28f, 0.35f};
+// gold fill, for the active sidebar page and lit test inputs; the cards' own background
+constexpr ImVec4 kGold{0.85f, 0.63f, 0.20f, 1.0f};
+constexpr ImVec4 kCardBg{0.09f, 0.08f, 0.07f, 1.0f};
+constexpr ImVec4 kDarkText{0.10f, 0.08f, 0.05f, 1.0f};
 constexpr std::pair<ImGuiCol, ImVec4> kPanelColors[] = {
     {ImGuiCol_WindowBg, kPanelBg}, {ImGuiCol_Border, kBorder}, {ImGuiCol_Text, kText},
     {ImGuiCol_Header, kHighlight}, {ImGuiCol_HeaderHovered, kHighlight}, {ImGuiCol_HeaderActive, kHighlight},
     {ImGuiCol_Button, kButton}, {ImGuiCol_ButtonHovered, kButtonHovered}, {ImGuiCol_ButtonActive, kButtonHovered},
     {ImGuiCol_FrameBg, kTab}, {ImGuiCol_FrameBgHovered, kTabHovered}, {ImGuiCol_FrameBgActive, kHighlight},
-    {ImGuiCol_ScrollbarGrab, kHighlight}, {ImGuiCol_ScrollbarGrabHovered, kButtonHovered},
+    {ImGuiCol_ScrollbarGrab, kHeading}, {ImGuiCol_ScrollbarGrabHovered, kButtonHovered},
     {ImGuiCol_ScrollbarGrabActive, kHeading}, {ImGuiCol_Separator, kLine}, {ImGuiCol_NavHighlight, kHeading},
+    {ImGuiCol_ChildBg, kCardBg}, {ImGuiCol_SliderGrab, kGold}, {ImGuiCol_SliderGrabActive, kHeading},
+    {ImGuiCol_CheckMark, kGold},
 };
 
 constexpr uint32_t kAnisoValues[] = {0, 2, 4, 8, 16};
@@ -193,14 +200,26 @@ int StepRange(int value, int lo, int hi, int inc, int step) {
     return lo + inc * StepIndex((std::clamp(value, lo, hi) - lo) / inc, step, count);
 }
 
-void Section(const char* title) {
+// a section's card: a bordered, rounded child with a gold heading; rows drawn inside size to the card
+void CardBegin(const char* label) {
     float em = ImGui::GetFontSize();
-    ImGui::Dummy(ImVec2(0, em * 0.5f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, kCardBg);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, em * 0.35f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em * 0.9f, em * 0.6f));
+    ImGui::BeginChild(label, ImVec2(0, 0), ImGuiChildFlags_Border | ImGuiChildFlags_AutoResizeY);
     ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
-    ImGui::TextUnformatted(Ui(title).c_str());
+    ImGui::TextUnformatted(Ui(label).c_str());
     ImGui::PopStyleColor();
     ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, em * 0.2f));
+    ImGui::Dummy(ImVec2(0, em * 0.15f));
+}
+
+void CardEnd() {
+    ImGui::EndChild();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0, ImGui::GetFontSize() * 0.5f));
 }
 
 constexpr float kValueEms = 12.0f;  // the value column's width
@@ -286,6 +305,48 @@ void Flip(bool& on, int step) {
 void Changed() {
     audio::SetOutputMode(game::Opt().audio_output);
     Save();
+}
+
+// label left, a slider right, laid out as the option rows are; true when the value changed
+bool SliderValueRow(const char* label, int* value, int lo, int hi, const char* format) {
+    RowBox box = MeasureRow();
+    ImGui::PushID(label);
+    RowLabel(box, label);
+    float block_x = box.row_x + box.row_w - box.block_w;
+    ImGui::SetCursorPos(ImVec2(block_x, box.row_y));
+    ImGui::SetNextItemWidth(box.block_w);
+    bool changed = ImGui::SliderInt("##slider", value, lo, hi, format);
+    ImGui::PopID();
+    EndRow(box);
+    return changed;
+}
+
+// one tap for a weak phone (0), balanced (1), or everything on (2); the brightness stays as the player set it
+void ApplyPreset(int which) {
+    game::Options& o = game::Opt();
+    if (which == 0) {
+        // half the render pixels, no bloom or motion blur, the car reflections only every fourth frame
+        o.bloom = false;
+        o.motion_blur = false;
+        o.reflections = 2;
+        o.screen_filter = 0;
+        Get().render_percent = 50;
+    } else if (which == 1) {
+        // two thirds of the render pixels, bloom on, no motion blur, the car reflections every second frame
+        o.bloom = true;
+        o.motion_blur = false;
+        o.reflections = 1;
+        o.screen_filter = 0;
+        Get().render_percent = 67;
+    } else {
+        // full render pixels, bloom and motion blur on, the car reflections every frame
+        o.bloom = true;
+        o.motion_blur = true;
+        o.reflections = 0;
+        o.screen_filter = 0;
+        Get().render_percent = 100;
+    }
+    Changed();
 }
 
 enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutput, kLanguage, kGyro,
@@ -782,13 +843,16 @@ void KeyRow(const Row& r) {
     g_capture_armed = false;
 }
 
-// the bound input, else the mapping's; a clear goes back to the mapping
+// the bound input, else the mapping's; a clear goes back to the mapping. A bind captured as an axis
+// (a trigger) is tagged, so the player sees why it reads as an axis and not a button
 void PadRow(const Row& r) {
     size_t count = 0;
     const input::Action& action = input::PadActions(&count)[r.id];
     std::string bound = input::PadBinding(size_t(r.id));
+    if (bound.empty()) bound = action.defaults;
+    else if (input::PadBindingIsAxis(size_t(r.id))) bound += " (axis)";
     int cleared = -1;
-    int box = BindRow(r.label, {bound.empty() ? action.defaults : bound}, g_pad_capture == r.id ? 0 : -1, cleared,
+    int box = BindRow(r.label, {bound}, g_pad_capture == r.id ? 0 : -1, cleared,
                       "PRESS A BUTTON");
     if (cleared >= 0 && CaptureFree()) input::PadBind(size_t(r.id), "");
     if (box < 0 || !CaptureFree()) return;
@@ -797,21 +861,238 @@ void PadRow(const Row& r) {
     g_pad_capture_since = std::chrono::steady_clock::now();
 }
 
-void DrawRows(int page) {
-    size_t count = 0;
-    const Row* list = rows::Page(page, &count);
-    for (size_t i = 0; i < count; i++) {
-        const Row& r = list[i];
+// the preset cards: three buttons side by side, each applying its preset on a tap
+void PresetCards() {
+    float em = ImGui::GetFontSize();
+    float gap = ImGui::GetStyle().ItemSpacing.x;
+    float w = (ImGui::GetContentRegionAvail().x - gap * 2) / 3;
+    struct Preset {
+        const char* name;
+        const char* desc;
+        int id;
+    };
+    constexpr Preset kPresets[] = {{"LOW-END", "50% - Bloom off", 0},
+                                   {"MID", "67% - Bloom on", 1},
+                                   {"HIGH", "100% - All on", 2}};
+    for (int i = 0; i < 3; i++) {
+        if (i) ImGui::SameLine(0, gap);
+        std::string label = Ui(kPresets[i].name) + "\n" + kPresets[i].desc;
+        if (ImGui::Button(label.c_str(), ImVec2(w, em * 2.8f))) ApplyPreset(kPresets[i].id);
+    }
+}
+
+void DrawDisplayPage() {
+    CardBegin("PERFORMANCE PRESETS");
+    PresetCards();
+    CardEnd();
+    // the graphics rows, grouped by their headings into cards; the preset links live in the cards above
+    bool in_card = false;
+    for (const Row& r : kGraphicsRows) {
         // YELLOW TINT is a dead setting in Carbon (no Carbon hook applies it), so hide the row there; Most
         // Wanted keeps it, its tint hook lives in src/game/game.cpp
         if (r.id == kYellowTint && std::wcscmp(kGame.short_title, L"NFS Carbon") == 0) continue;
-        if (r.kind == Kind::Heading) Section(r.label);
-        else if (r.kind == Kind::Value) ValueRow(r);
+        if (r.id == kLowEndPreset || r.id == kMidPreset || r.id == kHighPreset) continue;
+        if (r.kind == Kind::Heading) {
+            if (in_card) CardEnd();
+            CardBegin(r.label);
+            in_card = true;
+        } else if (r.kind == Kind::Value) {
+            if (r.id == kBrightness) {
+                // a slider, not arrows: the frame's gamma, 50% to 200%
+                int b = int(game::Opt().brightness);
+                if (SliderValueRow(r.label, &b, 50, 200, "%u%%")) {
+                    game::Opt().brightness = uint32_t(b);
+                    Changed();
+                }
+            } else {
+                ValueRow(r);
+            }
+        } else if (r.kind == Kind::Link) {
+            LinkRow(r);
+        }
+    }
+    if (in_card) CardEnd();
+}
+
+// the live input test: a gamepad drawn with ImGui primitives, its buttons and sticks lighting up as pressed
+void DrawPadTest() {
+    input::PadLive live;
+    if (!input::PadLiveState(live)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+        ImGui::TextUnformatted(Ui("No gamepad connected - plug in a controller to test it").c_str());
+        ImGui::PopStyleColor();
+        return;
+    }
+    float em = ImGui::GetFontSize();
+    float w = ImGui::GetContentRegionAvail().x;
+    float h = em * 12.0f;
+    ImVec2 o = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(w, h));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImU32 lit = IM_COL32(220, 175, 60, 255);
+    const ImU32 lit_text = IM_COL32(20, 15, 8, 255);
+    const ImU32 idle = IM_COL32(38, 33, 28, 255);
+    const ImU32 edge = IM_COL32(130, 112, 82, 255);
+    const ImU32 dim_text = IM_COL32(200, 185, 160, 255);
+    auto pill = [&](ImVec2 a, ImVec2 b, bool on, const char* text) {
+        dl->AddRectFilled(a, b, on ? lit : idle, (b.y - a.y) * 0.5f);
+        dl->AddRect(a, b, on ? lit : edge, (b.y - a.y) * 0.5f);
+        ImVec2 ts = ImGui::CalcTextSize(text);
+        dl->AddText(ImVec2((a.x + b.x - ts.x) / 2, (a.y + b.y - ts.y) / 2), on ? lit_text : dim_text, text);
+    };
+    auto circle = [&](ImVec2 c, float r, bool on, const char* text) {
+        dl->AddCircleFilled(c, r, on ? lit : idle, 32);
+        dl->AddCircle(c, r, on ? lit : edge, 32, 1.5f);
+        ImVec2 ts = ImGui::CalcTextSize(text);
+        dl->AddText(ImVec2(c.x - ts.x / 2, c.y - ts.y / 2), on ? lit_text : dim_text, text);
+    };
+    auto bar = [&](float x0, float x1, float y, float bh, float v, const char* text) {
+        dl->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + bh), idle, bh * 0.25f);
+        if (v > 0.01f)
+            dl->AddRectFilled(ImVec2(x0, y), ImVec2(x0 + (x1 - x0) * std::clamp(v, 0.0f, 1.0f), y + bh), lit,
+                              bh * 0.25f);
+        dl->AddRect(ImVec2(x0, y), ImVec2(x1, y + bh), edge, bh * 0.25f);
+        ImVec2 ts = ImGui::CalcTextSize(text);
+        dl->AddText(ImVec2(x0 - ts.x - em * 0.4f, y + (bh - ts.y) / 2), dim_text, text);
+    };
+    // the triggers' bars at the top, labelled
+    float bar_y = o.y + em * 0.6f;
+    float bar_h = em * 0.9f;
+    bar(o.x + em * 2.4f, o.x + w * 0.46f, bar_y, bar_h, live.lt, "LT");
+    bar(o.x + w * 0.54f, o.x + w - em * 2.4f, bar_y, bar_h, live.rt, "RT");
+    // the shoulders, start and back under the bars
+    float pill_y = bar_y + bar_h + em * 0.6f;
+    float pill_h = em * 1.5f;
+    pill(ImVec2(o.x + em * 2.4f, pill_y), ImVec2(o.x + em * 2.4f + w * 0.12f, pill_y + pill_h), live.lb, "LB");
+    pill(ImVec2(o.x + w - em * 2.4f - w * 0.12f, pill_y), ImVec2(o.x + w - em * 2.4f, pill_y + pill_h), live.rb, "RB");
+    pill(ImVec2(o.x + w * 0.5f - em * 3.4f, pill_y), ImVec2(o.x + w * 0.5f - em * 0.4f, pill_y + pill_h), live.back,
+         "BACK");
+    pill(ImVec2(o.x + w * 0.5f + em * 0.4f, pill_y), ImVec2(o.x + w * 0.5f + em * 3.4f, pill_y + pill_h), live.start,
+         "START");
+    // the d-pad left, ABXY right; the sticks below and inward, clear of both
+    float mid_y = pill_y + pill_h + em * 3.4f;
+    float r = em * 1.05f;
+    float s = r * 2 + em * 0.25f;
+    ImVec2 dpad(o.x + w * 0.16f, mid_y);
+    auto dpad_button = [&](float dx, float dy, bool on) {
+        ImVec2 a(dpad.x + dx * s - r, dpad.y + dy * s - r);
+        dl->AddRectFilled(a, ImVec2(a.x + r * 2, a.y + r * 2), on ? lit : idle, r * 0.3f);
+        dl->AddRect(a, ImVec2(a.x + r * 2, a.y + r * 2), on ? lit : edge, r * 0.3f);
+    };
+    dpad_button(0, -1, live.dpad_up);
+    dpad_button(0, 1, live.dpad_down);
+    dpad_button(-1, 0, live.dpad_left);
+    dpad_button(1, 0, live.dpad_right);
+    ImVec2 abxy(o.x + w * 0.84f, mid_y);
+    circle(ImVec2(abxy.x, abxy.y - s), r, live.north, "Y");
+    circle(ImVec2(abxy.x, abxy.y + s), r, live.south, "A");
+    circle(ImVec2(abxy.x - s, abxy.y), r, live.west, "X");
+    circle(ImVec2(abxy.x + s, abxy.y), r, live.east, "B");
+    // the sticks: a ring with a dot for the deflection, gold when the thumb button is pressed
+    auto stick = [&](ImVec2 c, float x, float y, bool pressed) {
+        float R = em * 1.7f;
+        dl->AddCircleFilled(c, R, idle, 40);
+        dl->AddCircle(c, R, pressed ? lit : edge, 40, 1.5f);
+        float dx = std::clamp(x, -1.0f, 1.0f) * R * 0.55f;
+        float dy = std::clamp(-y, -1.0f, 1.0f) * R * 0.55f;  // y up positive
+        dl->AddCircleFilled(ImVec2(c.x + dx, c.y + dy), R * 0.38f, pressed ? lit : IM_COL32(90, 78, 62, 255), 24);
+    };
+    float stick_y = mid_y + em * 3.2f;
+    float stick_lx = std::max(w * 0.34f, dpad.x + s + r + em * 1.7f + em * 0.6f);
+    float stick_rx = std::min(w * 0.66f, abxy.x - s - r - em * 1.7f - em * 0.6f);
+    stick(ImVec2(o.x + stick_lx, stick_y), live.lx, live.ly, live.ls);
+    stick(ImVec2(o.x + stick_rx, stick_y), live.rx, live.ry, live.rs);
+}
+
+void DrawPadGroup(const char* title, std::initializer_list<int> actions) {
+    CardBegin(title);
+    size_t count = 0;
+    const input::Action* acts = input::PadActions(&count);
+    for (int idx : actions) {
+        Row r{Kind::PadBind, idx, acts[idx].label};
+        PadRow(r);
+    }
+    CardEnd();
+}
+
+void DrawControllerPage() {
+    CardBegin("GAMEPAD");
+    input::PadLive live;
+    if (input::PadLiveState(live)) {
+        ImGui::TextUnformatted(live.name.empty() ? "Controller" : live.name.c_str());
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
+        ImGui::TextUnformatted(Ui("CONNECTED").c_str());
+        ImGui::PopStyleColor();
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Text, kDim);
+        ImGui::TextUnformatted(Ui("No gamepad connected").c_str());
+        ImGui::PopStyleColor();
+    }
+    CardEnd();
+    CardBegin("LIVE INPUT TEST");
+    DrawPadTest();
+    CardEnd();
+    // the rebinds, grouped by what they do in the game
+    DrawPadGroup("DRIVING", {0, 1, 2, 3, 6, 7, 14, 15, 16, 17, 18, 19});
+    DrawPadGroup("CAMERA", {4, 5, 20, 21, 22, 23});
+    DrawPadGroup("MENU", {8, 9, 10, 11, 12, 13});
+    CardBegin("STICKS");
+    int dz = int(app::Get().deadzone);
+    if (SliderValueRow("STICK DEADZONE", &dz, 0, 50, "%u%%")) {
+        app::Get().deadzone = uint32_t(dz);
+        app::Save();
+    }
+    if (ImGui::Button(Ui("RESET TO DEFAULTS").c_str())) input::ResetPadBindings();
+    CardEnd();
+}
+
+void DrawTouchPage() {
+    CardBegin("TOUCH");
+    for (const Row& r : kTouchRows) {
+        if (r.kind == Kind::Heading) continue;  // the card is the heading
+        if (r.kind == Kind::Value) ValueRow(r);
+        else if (r.kind == Kind::Link) LinkRow(r);
+    }
+    CardEnd();
+}
+
+void DrawRows(int page) {
+    if (page == kSettingsPage) {
+        DrawDisplayPage();
+        return;
+    }
+    if (page == kControllerPage) {
+        DrawControllerPage();
+        return;
+    }
+    if (page == kTouchPage) {
+        DrawTouchPage();
+        return;
+    }
+    // the other pages: their rows inside cards, a heading starting a new card
+    size_t count = 0;
+    const Row* list = rows::Page(page, &count);
+    bool in_card = false;
+    for (size_t i = 0; i < count; i++) {
+        const Row& r = list[i];
+        if (r.kind == Kind::Heading) {
+            if (in_card) CardEnd();
+            CardBegin(r.label);
+            in_card = true;
+            continue;
+        }
+        if (!in_card) {
+            CardBegin(kPages[page]);
+            in_card = true;
+        }
+        if (r.kind == Kind::Value) ValueRow(r);
         else if (r.kind == Kind::Link) LinkRow(r);
         else if (r.kind == Kind::Info) InfoRow(r);
         else if (r.kind == Kind::PadBind) PadRow(r);
         else KeyRow(r);
     }
+    if (in_card) CardEnd();
 }
 
 void Defaults() {
@@ -820,17 +1101,21 @@ void Defaults() {
     RestoreDefaults(g_page);
 }
 
-void DrawTitle() {
-    // Tabs for all settings pages:
-    for (int p = 0; p < rows::PageCount(); p++) {
-        if (p > 0) ImGui::SameLine();
+// the sidebar's pages, in order; the keyboard page stays, it is the only place to rebind keys in Carbon
+constexpr int kSidebarPages[] = {kSettingsPage, kControllerPage, kTouchPage, kKeyboardPage, kGeneralPage,
+                                 kCheatsPage, kCreditsPage};
+
+void DrawNav() {
+    float em = ImGui::GetFontSize();
+    for (int p : kSidebarPages) {
         std::string name = Ui(kPages[p]);
         bool active = (g_page == p);
-        if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f, 0.6f, 0.3f, 1.0f));
-        if (ImGui::Button(name.c_str())) {
-            g_page = p;
+        if (active) {
+            ImGui::PushStyleColor(ImGuiCol_Button, kGold);
+            ImGui::PushStyleColor(ImGuiCol_Text, kDarkText);
         }
-        if (active) ImGui::PopStyleColor();
+        if (ImGui::Button(name.c_str(), ImVec2(-1, em * 2.2f))) g_page = p;
+        if (active) ImGui::PopStyleColor(2);
     }
 }
 
@@ -883,27 +1168,38 @@ void DrawPanel() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     float em = ImGui::GetFontSize();
     ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    // Make the settings panel larger to comfortably fit more options and make scrolling spacious
-    float panel_w = std::min(vp->Size.x * 0.90f, em * 48.0f);
-    float panel_h = std::min(vp->Size.y * 0.90f, em * 23.0f);
+    // a sidebar needs room: wider than the old plain list
+    float panel_w = std::min(vp->Size.x * 0.92f, em * 56.0f);
+    float panel_h = std::min(vp->Size.y * 0.92f, em * 26.0f);
     ImGui::SetNextWindowSize(ImVec2(panel_w, panel_h), ImGuiCond_Always);
     for (const auto& [col, color] : kPanelColors) ImGui::PushStyleColor(col, color);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em * 1.6f, em * 1.2f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, em * 0.35f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, em * 0.25f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(em * 1.2f, em * 0.9f));
     // a scrollbar a thumb can take
-    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, em * 1.4f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, em * 1.2f);
     ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, em * 2.0f);
     constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar;
     if (ImGui::Begin("##settings", nullptr, kFlags)) {
-        DrawTitle();
+        ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
+        ImGui::TextUnformatted(Ui("SETTINGS").c_str());
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+        ImGui::Dummy(ImVec2(0, em * 0.3f));
         float footer = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeightWithSpacing() + em;
-        ImGui::BeginChild("##rows", ImVec2(0, -footer), ImGuiChildFlags_NavFlattened);
+        ImGui::BeginChild("##body", ImVec2(0, -footer), ImGuiChildFlags_None);
+        float nav_w = em * 11.0f;
+        ImGui::BeginChild("##nav", ImVec2(nav_w, 0), ImGuiChildFlags_None);
+        DrawNav();
+        ImGui::EndChild();
+        ImGui::SameLine(0, em * 0.8f);
+        ImGui::BeginChild("##content", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
         g_hovered_box = -1;
         DrawRows(g_page);
         DragScroll();
+        ImGui::EndChild();
         ImGui::EndChild();
         DrawFooter(em);
     }
@@ -1016,35 +1312,11 @@ void rows::Activate(const Row& r) {
         if (r.id == kExportLog) {
             ExportLog();
         } else if (r.id == kLowEndPreset) {
-            // one tap for a weak phone: half the render pixels, no bloom or motion blur, the car
-            // reflections only every fourth frame, no screen filter; the brightness stays as the player set it
-            game::Options& o = game::Opt();
-            o.bloom = false;
-            o.motion_blur = false;
-            o.reflections = 2;
-            o.screen_filter = 0;
-            Get().render_percent = 50;
-            Changed();
+            ApplyPreset(0);
         } else if (r.id == kMidPreset) {
-            // balanced: two thirds of the render pixels, bloom on, no motion blur, the car reflections
-            // every second frame, no screen filter; the brightness stays as the player set it
-            game::Options& o = game::Opt();
-            o.bloom = true;
-            o.motion_blur = false;
-            o.reflections = 1;
-            o.screen_filter = 0;
-            Get().render_percent = 67;
-            Changed();
+            ApplyPreset(1);
         } else if (r.id == kHighPreset) {
-            // everything on: full render pixels, bloom and motion blur on, the car reflections every
-            // frame, no screen filter; the brightness stays as the player set it
-            game::Options& o = game::Opt();
-            o.bloom = true;
-            o.motion_blur = true;
-            o.reflections = 0;
-            o.screen_filter = 0;
-            Get().render_percent = 100;
-            Changed();
+            ApplyPreset(2);
         } else if (r.id == kTouchEdit) touch::EditLayout();
         else if (const char* url = LinkUrl(r.id)) SDL_OpenURL(url);
     } else if (r.kind == Kind::Bind && g_capture < 0 && g_pad_capture < 0) {

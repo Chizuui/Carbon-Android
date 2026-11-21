@@ -439,6 +439,13 @@ Pad Poll(int port) {
     constexpr int16_t kStickPushed = 16000;
     auto pushed = [](int16_t v) { return v > kStickPushed || v < -kStickPushed; };
     if (port == 0) MergeLoose(p, binds);
+    // the sticks' dead zone: a small deflection reads as none, so a worn stick does not steer on its own
+    uint32_t dz = app::Get().deadzone;
+    if (dz) {
+        int16_t t = int16_t(std::min<uint32_t>(dz, 50) * 32767 / 100);
+        auto dead = [&](int16_t& v) { if (v > -t && v < t) v = 0; };
+        dead(p.lx); dead(p.ly); dead(p.rx); dead(p.ry);
+    }
     bool analog = std::any_of(std::begin(p.analog), std::end(p.analog), [](uint8_t a) { return a > 0x20; });
     if (p.buttons || analog || pushed(p.lx) || pushed(p.ly) || pushed(p.rx) || pushed(p.ry)) touch::PadUsed();
     touch::Apply(port, p);
@@ -582,6 +589,85 @@ std::string PressedPadInput() {
     for (int code = 0; code < kLooseCodes; code++)
         if (g_loose.keys[size_t(code)]) return SourceText({'k', code});
     return {};
+}
+
+bool PadBindingIsAxis(size_t action) {
+    if (action >= kPadCount) return false;
+    return PadBindsNow()[action].kind == 'a';
+}
+
+// the first connected gamepad's live state, for the CONTROLLER page's input test: SDL's gamepad first,
+// else the loose controller Android hands over without its device
+bool PadLiveState(PadLive& out) {
+    out = {};
+    {
+        std::lock_guard lock(g_lock);
+        for (SDL_Gamepad* pad : g_pads) {
+            if (!pad) continue;
+            out.connected = true;
+            if (const char* name = SDL_GetGamepadName(pad)) out.name = name;
+            auto btn = [&](SDL_GamepadButton b) { return SDL_GetGamepadButton(pad, b) != 0; };
+            out.south = btn(SDL_GAMEPAD_BUTTON_SOUTH);
+            out.east = btn(SDL_GAMEPAD_BUTTON_EAST);
+            out.west = btn(SDL_GAMEPAD_BUTTON_WEST);
+            out.north = btn(SDL_GAMEPAD_BUTTON_NORTH);
+            out.lb = btn(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+            out.rb = btn(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+            out.start = btn(SDL_GAMEPAD_BUTTON_START);
+            out.back = btn(SDL_GAMEPAD_BUTTON_BACK);
+            out.ls = btn(SDL_GAMEPAD_BUTTON_LEFT_STICK);
+            out.rs = btn(SDL_GAMEPAD_BUTTON_RIGHT_STICK);
+            out.dpad_up = btn(SDL_GAMEPAD_BUTTON_DPAD_UP);
+            out.dpad_down = btn(SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+            out.dpad_left = btn(SDL_GAMEPAD_BUTTON_DPAD_LEFT);
+            out.dpad_right = btn(SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+            auto axis = [&](SDL_GamepadAxis a) { return SDL_GetGamepadAxis(pad, a) / 32768.0f; };
+            out.lx = axis(SDL_GAMEPAD_AXIS_LEFTX);
+            out.ly = -axis(SDL_GAMEPAD_AXIS_LEFTY);
+            out.rx = axis(SDL_GAMEPAD_AXIS_RIGHTX);
+            out.ry = -axis(SDL_GAMEPAD_AXIS_RIGHTY);
+            out.lt = std::clamp(axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER), 0.0f, 1.0f);
+            out.rt = std::clamp(axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER), 0.0f, 1.0f);
+            return true;
+        }
+    }
+    std::lock_guard lock(g_loose_lock);
+    const Loose& l = g_loose;
+    if (!l.seen) return false;
+    out.connected = true;
+    out.name = "Android controller";
+    for (int code = 0; code < kLooseCodes; code++) {
+        if (!l.keys[size_t(code)]) continue;
+        int bit, analog;
+        LooseKey(code, bit, analog);
+        if (bit == 0) out.dpad_up = true;
+        else if (bit == 1) out.dpad_down = true;
+        else if (bit == 2) out.dpad_left = true;
+        else if (bit == 3) out.dpad_right = true;
+        else if (bit == 4) out.start = true;
+        else if (bit == 5) out.back = true;
+        else if (bit == 6) out.ls = true;
+        else if (bit == 7) out.rs = true;
+        else if (analog == 0) out.south = true;
+        else if (analog == 1) out.east = true;
+        else if (analog == 2) out.west = true;
+        else if (analog == 3) out.north = true;
+        else if (analog == 4) out.rt = 1.0f;  // BUTTON_R2: black
+        else if (analog == 5) out.lt = 1.0f;  // BUTTON_L2: white
+        else if (analog == 6) out.lb = true;  // BUTTON_L1
+        else if (analog == 7) out.rb = true;  // BUTTON_R1
+    }
+    if (l.hy < -0.5f) out.dpad_up = true;
+    if (l.hy > 0.5f) out.dpad_down = true;
+    if (l.hx < -0.5f) out.dpad_left = true;
+    if (l.hx > 0.5f) out.dpad_right = true;
+    out.lx = l.lx;
+    out.ly = -l.ly;
+    out.rx = l.rx;
+    out.ry = -l.ry;
+    out.lt = std::max(out.lt, l.lt);
+    out.rt = std::max(out.rt, l.rt);
+    return true;
 }
 
 }  // namespace input

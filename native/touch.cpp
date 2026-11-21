@@ -1765,13 +1765,13 @@ void DrawEditorBar(ImDrawList* dl, float th) {
 
         ImU32 fill_color;
         if (active_tab) {
-            fill_color = IM_COL32(200, 150, 50, 245);
+            fill_color = IM_COL32(217, 161, 51, 245);  // gold, the panel's active colour
         } else if (tab) {
-            fill_color = IM_COL32(40, 36, 30, 225);
+            fill_color = IM_COL32(26, 23, 21, 225);
         } else if (done) {
-            fill_color = IM_COL32(150, 115, 45, 235);
+            fill_color = IM_COL32(180, 130, 45, 235);  // gold, the primary action
         } else {
-            fill_color = IM_COL32(20, 18, 14, 225);
+            fill_color = IM_COL32(20, 18, 16, 225);
         }
 
         ImU32 border_color = active_tab ? IM_COL32(255, 220, 120, 255) : IM_COL32(220, 180, 100, alpha);
@@ -1779,10 +1779,20 @@ void DrawEditorBar(ImDrawList* dl, float th) {
         dl->AddRectFilled(ImVec2(r[0], r[1]), ImVec2(r[2], r[3]), fill_color, h * 0.015f);
         dl->AddRect(ImVec2(r[0], r[1]), ImVec2(r[2], r[3]), border_color, h * 0.015f, 0, th * (active_tab ? 1.2f : 0.7f));
         CentredText(dl, ImVec2((r[0] + r[2]) / 2, (r[1] + r[3]) / 2), h * (size ? 0.06f : 0.042f),
-                    active_tab ? IM_COL32(0, 0, 0, 255) : IM_COL32(255, 255, 255, alpha), app::Ui(label).c_str());
+                    (active_tab || done) ? IM_COL32(0, 0, 0, 255) : IM_COL32(255, 255, 255, alpha),
+                    app::Ui(label).c_str());
+    }
+    // the picked control's name under the bar, else the hint
+    std::string hint = "DRAG TO MOVE, PINCH OR - + TO RESIZE";
+    if (g_hud_selected >= 0) hint = std::string(kHudLabels[g_hud_selected]) + " - " + hint;
+    else if (g_selected >= 0) {
+        const char* name = IsStick(size_t(g_selected))
+                               ? (size_t(g_selected) == kRStick ? "RIGHT STICK" : "LEFT STICK")
+                               : kButtons[size_t(g_selected)].label;
+        hint = std::string(name) + " - " + hint;
     }
     CentredText(dl, ImVec2(Width() / 2, (kBarY + kBarH + 0.05f) * h), h * 0.036f, IM_COL32(255, 255, 255, 220),
-                app::Ui("DRAG TO MOVE, PINCH OR - + TO RESIZE").c_str());
+                app::Ui(hint).c_str());
 }
 
 

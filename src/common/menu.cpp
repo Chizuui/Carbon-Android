@@ -5,7 +5,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <cwchar>
+#include <filesystem>
 #include <iterator>
 #include <map>
 #include <string>
@@ -26,6 +28,7 @@
 #include "common/options.h"
 #include "common/pad_binds.h"
 #include "common/translations.h"
+#include "core/log.h"
 
 // native/gyro.cpp: steering by tilting the phone
 namespace gyro {
@@ -65,6 +68,47 @@ Settings DefaultSettings();  // native/main.cpp: a phone's first run, unlimited 
 namespace {
 
 std::atomic<bool> g_open{false};
+
+// EXPORT LOG: the current run's log, copied where the player can send it. The log already lives in the shared
+// logs folder, but a tester has to know which of its files is this run's; the export is one clearly named copy
+// in Download, where a file manager shows it first. If Download is not writable (no all-files access yet), the
+// copy lands beside the log itself instead. The row shows EXPORT, then SAVED or FAILED; the full path is in the log
+std::string g_export_log_status = "EXPORT";
+
+void ExportLog() {
+    logx::Flush();
+    std::filesystem::path src = logx::Path();
+    if (src.empty()) {
+        g_export_log_status = "FAILED";
+        LOGE("export log: no log file");
+        return;
+    }
+    std::time_t t = std::time(nullptr);
+    std::tm tm{};
+    localtime_r(&t, &tm);
+    char name[64];
+    std::snprintf(name, sizeof(name), "%s-log-%04d%02d%02d-%02d%02d%02d.log", kGame.log, tm.tm_year + 1900,
+                  tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+    std::error_code ec;
+    // the log sits in <shared>/logs, so its parent's parent's parent is the storage root, and Download is beside it
+    std::filesystem::path download = src.parent_path().parent_path().parent_path() / "Download" / name;
+    std::filesystem::create_directories(download.parent_path(), ec);
+    ec.clear();
+    std::filesystem::copy_file(src, download, ec);
+    std::filesystem::path dst = download;
+    if (ec) {
+        ec.clear();
+        dst = src.parent_path() / name;
+        std::filesystem::copy_file(src, dst, ec);
+    }
+    if (ec) {
+        g_export_log_status = "FAILED";
+        LOGE("export log: cannot copy %s", src.string().c_str());
+        return;
+    }
+    g_export_log_status = "SAVED";
+    LOGR("export log: %s -> %s", src.string().c_str(), dst.string().c_str());
+}
 
 // gold on a dark red
 constexpr ImVec4 kPanelBg{0.045f, 0.02f, 0.02f, 0.94f};
@@ -249,7 +293,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
              kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kShaderPreload, kBrightness, kLowEndPreset,
-             kMidPreset, kHighPreset };
+             kMidPreset, kHighPreset, kExportLog };
 
 using rows::Kind;
 using rows::Row;
@@ -303,6 +347,7 @@ constexpr Row kGeneralRows[] = {
     {Kind::Value, kLanguage, "LANGUAGE"},
     {Kind::Value, kAudioOutput, "AUDIO OUTPUT"},
     {Kind::Value, kSkipMovies, "SKIP MOVIES"},
+    {Kind::Link, kExportLog, "EXPORT LOG"},
 };
 
 // the panel's alone: the game's options menu (src/game/options_menu.cpp) shows no section of it
@@ -691,7 +736,7 @@ void LinkRow(const Row& r) {
     bool open = ImGui::Selectable("##link", false, ImGuiSelectableFlags_AllowOverlap, ImVec2(box.row_w, box.row_h));
     if (ImGui::IsItemFocused() || ImGui::IsItemHovered()) FillItem();
     RowLabel(box, r.label);
-    std::string value = Ui("OPEN");
+    std::string value = r.id == kExportLog ? g_export_log_status : Ui("OPEN");
     float value_x = box.row_x + box.row_w - box.block_w + box.row_h + ImGui::GetStyle().ItemSpacing.x;
     float pad = (box.value_w - ImGui::CalcTextSize(value.c_str()).x) * 0.5f;
     ImGui::SetCursorPos(ImVec2(value_x + std::max(pad, 0.0f), box.row_y));
@@ -702,7 +747,8 @@ void LinkRow(const Row& r) {
     ImGui::PopID();
     EndRow(box);
     if (!open) return;
-    if (r.id == kTouchEdit) touch::EditLayout();
+    if (r.id == kExportLog) ExportLog();
+    else if (r.id == kTouchEdit) touch::EditLayout();
     else if (const char* url = LinkUrl(r.id)) SDL_OpenURL(url);
 }
 
@@ -941,6 +987,7 @@ std::string rows::Value(const Row& r, int step) {
         case Kind::Value:
             return Ui(RowText(r.id, step));
         case Kind::Link:
+            if (r.id == kExportLog) return g_export_log_status;
             return Ui(r.id == kLowEndPreset || r.id == kMidPreset || r.id == kHighPreset ? "APPLY" : "OPEN");
         case Kind::Info:
             return r.id >= 0 && r.id < int(std::size(kCreditNames)) ? kCreditNames[r.id] : "";
@@ -963,7 +1010,9 @@ std::string rows::Value(const Row& r, int step) {
 
 void rows::Activate(const Row& r) {
     if (r.kind == Kind::Link) {
-        if (r.id == kLowEndPreset) {
+        if (r.id == kExportLog) {
+            ExportLog();
+        } else if (r.id == kLowEndPreset) {
             // one tap for a weak phone: half the render pixels, no bloom or motion blur, the car
             // reflections only every fourth frame, no screen filter; the brightness stays as the player set it
             game::Options& o = game::Opt();

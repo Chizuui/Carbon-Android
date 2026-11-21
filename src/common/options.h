@@ -24,6 +24,8 @@ struct Options {
     uint32_t fps_position = 0;  // the counter's place, src/common/menu.cpp's kFpsPositionNames
     bool fps_usage = true;      // the counter's CPU and GPU load
     bool fps_temps = true;      // the counter's CPU, GPU and battery temperatures
+    uint32_t overlay_style = 0;  // the counter's look: 0 Afterburner, 1 GOverlay, 2 Carbon, src/common/menu.cpp
+    uint32_t overlay_layout = 0;  // the counter's shape: 0 vertical (stacked), 1 horizontal (one line)
     uint32_t screen_filter = 0;  // the present's look: 0 none, 1 sharpen, 2 vivid, 3 scanlines, 4 CRT, 5 HDR
     uint32_t anti_aliasing = 0;  // kAaOff, kAaFxaa or kAaSsaa
     uint32_t aspect_ratio = 0;  // the frame's shape in hundredths (133 is 4:3), 0 the whole screen; common/aspect.h

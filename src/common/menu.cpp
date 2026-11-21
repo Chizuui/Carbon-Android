@@ -153,6 +153,15 @@ enum FpsPosition : uint32_t { kFpsTop, kFpsTopLeft, kFpsTopRight, kFpsBottomLeft
 constexpr uint32_t kFpsPositions[] = {kFpsTop, kFpsTopLeft, kFpsTopRight, kFpsBottomLeft, kFpsBottom, kFpsBottomRight};
 const char* const kFpsPositionNames[] = {"TOP CENTER", "TOP LEFT", "TOP RIGHT", "BOTTOM LEFT", "BOTTOM CENTER",
                                          "BOTTOM RIGHT"};
+// the overlay's look, Options::overlay_style; Afterburner is bare coloured text, GOverlay a dark panel with bars
+// and a frame-time graph, Carbon the gold strip
+enum OverlayStyle : uint32_t { kOverlayAfterburner, kOverlayGoverlay, kOverlayCarbon };
+constexpr uint32_t kOverlayStyles[] = {kOverlayAfterburner, kOverlayGoverlay, kOverlayCarbon};
+const char* const kOverlayStyleNames[] = {"AFTERBURNER", "GOVERLAY", "CARBON"};
+// the overlay's shape, Options::overlay_layout; vertical stacks the numbers, horizontal puts them on one line
+enum OverlayLayout : uint32_t { kOverlayVertical, kOverlayHorizontal };
+constexpr uint32_t kOverlayLayouts[] = {kOverlayVertical, kOverlayHorizontal};
+const char* const kOverlayLayoutNames[] = {"VERTICAL", "HORIZONTAL"};
 constexpr uint32_t kAudioOutputs[] = {audio::kOutputAuto, audio::kOutputMono, audio::kOutputStereo,
                                       audio::kOutputSurround};
 const char* const kAudioOutputNames[] = {"AUTOMATIC", "MONO", "2.0 STEREO", "5.1 SURROUND"};
@@ -355,7 +364,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
              kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kShaderPreload, kBrightness, kLowEndPreset,
-             kMidPreset, kHighPreset, kExportLog, kDiscord };
+             kMidPreset, kHighPreset, kExportLog, kDiscord, kOverlayStyle, kOverlayLayout };
 
 using rows::Kind;
 using rows::Row;
@@ -372,11 +381,14 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Link, kHighPreset, "HIGH PRESET"},
     {Kind::Value, kVsync, "VERTICAL SYNC"},
     {Kind::Value, kMaxFps, "MAX FRAME RATE"},
+    {Kind::Value, kShaderPreload, "SHADER PRELOADING"},
+    {Kind::Heading, -1, "OVERLAY PERFORMA"},
     {Kind::Value, kFpsCounter, "FPS COUNTER"},
+    {Kind::Value, kOverlayStyle, "OVERLAY STYLE"},
+    {Kind::Value, kOverlayLayout, "OVERLAY LAYOUT"},
     {Kind::Value, kFpsPosition, "FPS COUNTER POSITION"},
     {Kind::Value, kFpsUsage, "SHOW CPU / GPU USAGE"},
     {Kind::Value, kFpsTemps, "SHOW TEMPERATURES"},
-    {Kind::Value, kShaderPreload, "SHADER PRELOADING"},
     {Kind::Heading, -1, "QUALITY"},
     {Kind::Value, kAniso, "ANISOTROPIC FILTERING"},
     {Kind::Value, kAntiAliasing, "ANTI-ALIASING"},
@@ -556,6 +568,12 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
             return true;
         case kFpsPosition:
             std::snprintf(text, sizeof(text), "%s", kFpsPositionNames[StepTable(kFpsPositions, o.fps_position, step)]);
+            return true;
+        case kOverlayStyle:
+            std::snprintf(text, sizeof(text), "%s", kOverlayStyleNames[StepTable(kOverlayStyles, o.overlay_style, step)]);
+            return true;
+        case kOverlayLayout:
+            std::snprintf(text, sizeof(text), "%s", kOverlayLayoutNames[StepTable(kOverlayLayouts, o.overlay_layout, step)]);
             return true;
         default:
             return false;
@@ -1377,16 +1395,6 @@ void ToggleMenu() {
     if (open) input::ReleaseCursor();
 }
 
-// "CPU 40% 65°C", the parts the device tells
-void AppendPerf(std::string& line, const char* name, float load, float temp) {
-    if (load < 0 && temp < 0) return;
-    char part[48];
-    int n = std::snprintf(part, sizeof(part), "%s%s", line.empty() ? "" : "   ", name);
-    if (load >= 0) n += std::snprintf(part + n, sizeof(part) - n, " %.0f%%", load);
-    if (temp >= 0) std::snprintf(part + n, sizeof(part) - n, " %.0f\xC2\xB0" "C", temp);
-    line += part;
-}
-
 // a line of text with a drop shadow, its left edge at x
 void DrawShadowed(ImDrawList* dl, float size, ImVec2 at, ImU32 color, const char* text) {
     float shadow = std::max(2.0f, size / 12.0f);
@@ -1394,36 +1402,153 @@ void DrawShadowed(ImDrawList* dl, float size, ImVec2 at, ImU32 color, const char
     dl->AddText(ImGui::GetFont(), size, at, color, text);
 }
 
-// the frame rate, and under it the CPU's and GPU's load and temperatures and the battery's, over the game at the
-// place Options::fps_position picks
+// the frame rate's colour: green at 55 and up, yellow from 30, red below
+ImU32 FpsColor(double fps) {
+    if (fps >= 55) return IM_COL32(60, 220, 110, 255);
+    if (fps >= 30) return IM_COL32(255, 200, 0, 255);
+    return IM_COL32(255, 70, 60, 255);
+}
+
+// a temperature's colour: white while cool, orange from 70, red from 80; -1 is the device not telling
+ImU32 TempColor(float temp) {
+    if (temp >= 80) return IM_COL32(255, 70, 60, 255);
+    if (temp >= 70) return IM_COL32(255, 150, 40, 255);
+    return IM_COL32(235, 235, 235, 255);
+}
+
+// one number in the overlay: its label, its value, the value's colour, and the load bar's fill (-1, none)
+struct OverlayMetric {
+    const char* label;
+    char value[16];
+    ImU32 color;
+    float load;
+};
+
+// the last frame times in milliseconds, for the GOverlay style's graph; DrawUi runs once a present
+constexpr size_t kFrameTimeCount = 120;
+float g_frame_times[kFrameTimeCount] = {};
+size_t g_frame_time_i = 0, g_frame_time_n = 0;
+std::chrono::steady_clock::time_point g_frame_time_last{};
+
+// the graph, 0 to 33.3 ms, with the 60 fps line at 16.7 ms
+void DrawFrameTimeGraph(ImDrawList* dl, ImVec2 at, float w, float h) {
+    dl->AddRectFilled(at, ImVec2(at.x + w, at.y + h), IM_COL32(0, 0, 0, 90));
+    float y167 = at.y + h * (1.0f - 16.7f / 33.3f);
+    dl->AddLine(ImVec2(at.x, y167), ImVec2(at.x + w, y167), IM_COL32(255, 80, 60, 180));
+    size_t n = g_frame_time_n;
+    if (n < 2) return;
+    size_t base = (g_frame_time_i + kFrameTimeCount - n) % kFrameTimeCount;
+    for (size_t j = 1; j < n; j++) {
+        float t0 = std::min(g_frame_times[(base + j - 1) % kFrameTimeCount], 33.3f);
+        float t1 = std::min(g_frame_times[(base + j) % kFrameTimeCount], 33.3f);
+        float xa = at.x + w * float(j - 1) / float(n - 1);
+        float xb = at.x + w * float(j) / float(n - 1);
+        float ya = at.y + h * (1.0f - t0 / 33.3f);
+        float yb = at.y + h * (1.0f - t1 / 33.3f);
+        dl->AddLine(ImVec2(xa, ya), ImVec2(xb, yb), IM_COL32(255, 214, 90, 255));
+    }
+}
+
+// the frame rate, and under it or beside it the CPU's and GPU's load and temperatures and the battery's, over the
+// game at the place Options::fps_position picks; the style and layout come from Options::overlay_style and
+// Options::overlay_layout
 void DrawFpsCounter(double fps) {
     const game::Options& o = game::Opt();
     if (!o.fps_counter || MenuOpen()) return;
     host::SamplePerf();
-    char text[16];
-    std::snprintf(text, sizeof(text), "%.0f FPS", fps);
-    std::string perf;
-    AppendPerf(perf, "CPU", o.fps_usage ? host::CpuLoad() : -1, o.fps_temps ? host::CpuTemp() : -1);
-    AppendPerf(perf, "GPU", o.fps_usage ? host::GpuLoad() : -1, o.fps_temps ? host::GpuTemp() : -1);
-    if (o.fps_temps) AppendPerf(perf, "BAT", -1, host::BatteryTemp());
+    // the frame time for the graph, from the gap between presents
+    auto now = std::chrono::steady_clock::now();
+    if (g_frame_time_last != std::chrono::steady_clock::time_point{}) {
+        float ms = std::chrono::duration<float, std::milli>(now - g_frame_time_last).count();
+        g_frame_times[g_frame_time_i] = std::min(std::max(ms, 0.0f), 100.0f);
+        g_frame_time_i = (g_frame_time_i + 1) % kFrameTimeCount;
+        if (g_frame_time_n < kFrameTimeCount) g_frame_time_n++;
+    }
+    g_frame_time_last = now;
+
+    // the numbers to show, each with its own colour; the load bar's fill rides along
+    OverlayMetric metrics[4];
+    int count = 0;
+    std::snprintf(metrics[count].value, sizeof(metrics[count].value), "%.0f", fps);
+    metrics[count].label = "FPS";
+    metrics[count].color = FpsColor(fps);
+    metrics[count].load = -1;
+    count++;
+    auto add_perf = [&](const char* label, float load, float temp) {
+        if (load < 0 && temp < 0) return;
+        OverlayMetric& m = metrics[count];
+        int n = 0;
+        if (load >= 0) n += std::snprintf(m.value + n, sizeof(m.value) - n, "%.0f%%", load);
+        if (temp >= 0) std::snprintf(m.value + n, sizeof(m.value) - n, " %.0f\xC2\xB0" "C", temp);
+        m.label = label;
+        m.color = TempColor(temp);
+        m.load = load;
+        count++;
+    };
+    add_perf("CPU", o.fps_usage ? host::CpuLoad() : -1, o.fps_temps ? host::CpuTemp() : -1);
+    add_perf("GPU", o.fps_usage ? host::GpuLoad() : -1, o.fps_temps ? host::GpuTemp() : -1);
+    if (o.fps_temps && host::BatteryTemp() >= 0) {
+        OverlayMetric& m = metrics[count];
+        std::snprintf(m.value, sizeof(m.value), "%.0f\xC2\xB0" "C", host::BatteryTemp());
+        m.label = "BAT";
+        m.color = TempColor(host::BatteryTemp());
+        m.load = -1;
+        count++;
+    }
 
     ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImFont* font = ImGui::GetFont();
     ImVec2 screen = ImGui::GetIO().DisplaySize;
     float big = ImGui::GetFontSize() * 1.5f, small = ImGui::GetFontSize();
-    ImVec2 fs = ImGui::GetFont()->CalcTextSizeA(big, FLT_MAX, 0, text);
-    ImVec2 ps = perf.empty() ? ImVec2(0, 0) : ImGui::GetFont()->CalcTextSizeA(small, FLT_MAX, 0, perf.c_str());
-    ImVec2 cs = ImGui::GetFont()->CalcTextSizeA(small, FLT_MAX, 0, kFpsCredit);
-    // the first line: the frame rate, the credit beside it
-    float gap = small;
-    float line_w = fs.x + gap + cs.x;
-    float block = fs.y + ps.y;
+    float gap = small * 0.5f;      // between a label and its value
+    float seg_gap = small * 1.5f;  // between segments on one line
+    bool horizontal = o.overlay_layout == kOverlayHorizontal;
+    bool goverlay = o.overlay_style == kOverlayGoverlay;
+    bool carbon = o.overlay_style == kOverlayCarbon;
+    float pad = goverlay ? small * 0.5f : 0;  // the panel's padding
+    float graph_h = goverlay ? small * 2.0f : 0;
+    float graph_gap = goverlay ? small * 0.5f : 0;
+    float bar_w = goverlay ? small * 4.0f : 0;  // the load bar beside a value
+    float bar_h = small * 0.45f;
+
+    // the label and value widths at the size each line uses; stacked, the values sit in one column
+    float label_w[4] = {}, value_w[4] = {};
+    float label_col = 0;
+    for (int i = 0; i < count; i++) {
+        float size = !horizontal && i == 0 ? big : small;
+        label_w[i] = font->CalcTextSizeA(size, FLT_MAX, 0, metrics[i].label).x;
+        value_w[i] = font->CalcTextSizeA(size, FLT_MAX, 0, metrics[i].value).x;
+        if (!horizontal) label_col = std::max(label_col, label_w[i]);
+    }
+    float credit_w = font->CalcTextSizeA(small, FLT_MAX, 0, kFpsCredit).x;
+
+    float block_w = 0, block_h = 0;
+    if (horizontal) {
+        for (int i = 0; i < count; i++) {
+            block_w += label_w[i] + gap + value_w[i];
+            if (metrics[i].load >= 0) block_w += gap + bar_w;
+            if (i == 0) block_w += gap + credit_w;  // the credit beside the frame rate
+            if (i + 1 < count) block_w += seg_gap;
+        }
+        block_h = small;
+    } else {
+        for (int i = 0; i < count; i++) {
+            float w = label_col + gap + value_w[i];
+            if (metrics[i].load >= 0) w += gap + bar_w;
+            if (i == 0) w += gap + credit_w;
+            block_w = std::max(block_w, w);
+        }
+        block_h = big + (count - 1) * small;
+    }
+    if (goverlay) block_h += graph_gap + graph_h;
+
     float margin = screen.y * 0.03f;
     uint32_t pos = o.fps_position;
     bool bottom = pos == kFpsBottomLeft || pos == kFpsBottom || pos == kFpsBottomRight;
     // top centre sits under the settings gear, bottom centre over Back and Start, which the touch controls keep there
     float y = pos == kFpsTop ? screen.y * 0.14f
-              : pos == kFpsBottom ? screen.y * 0.86f - block
-              : bottom ? screen.y - margin - block
+              : pos == kFpsBottom ? screen.y * 0.86f - block_h
+              : bottom ? screen.y - margin - block_h
                        : margin;
     // left, centred or right aligned, each line on its own; every corner at the edge, as far in as it is from the
     // top or bottom
@@ -1433,11 +1558,60 @@ void DrawFpsCounter(double fps) {
         if (pos == kFpsTopRight || pos == kFpsBottomRight) return screen.x - side - w;
         return screen.x / 2 - w / 2;
     };
-    float line_x = x(line_w);
-    DrawShadowed(dl, big, ImVec2(line_x, y), IM_COL32(255, 214, 90, 255), text);
-    // the credit beside the frame rate, dimmer, its foot on the same line
-    DrawShadowed(dl, small, ImVec2(line_x + fs.x + gap, y + fs.y - cs.y), IM_COL32(200, 180, 150, 220), kFpsCredit);
-    if (!perf.empty()) DrawShadowed(dl, small, ImVec2(x(ps.x), y + fs.y), IM_COL32(235, 235, 235, 255), perf.c_str());
+    float block_x = x(block_w);
+    if (goverlay) {
+        dl->AddRectFilled(ImVec2(block_x - pad, y - pad), ImVec2(block_x + block_w + pad, y + block_h + pad),
+                          IM_COL32(8, 8, 10, 175), small * 0.4f);
+    }
+
+    ImU32 label_color = carbon ? IM_COL32(200, 180, 150, 220)
+                        : goverlay ? IM_COL32(200, 200, 200, 255)
+                                   : IM_COL32(165, 165, 165, 255);
+    // the panel gives the contrast, so GOverlay draws plain text; the other styles keep the drop shadow
+    auto text = [&](float size, ImVec2 at, ImU32 color, const char* s) {
+        if (goverlay) dl->AddText(font, size, at, color, s);
+        else DrawShadowed(dl, size, at, color, s);
+    };
+    auto bar = [&](float bx, float by, float load) {
+        dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bar_w, by + bar_h), IM_COL32(255, 255, 255, 40));
+        dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bar_w * load / 100.0f, by + bar_h),
+                          IM_COL32(255, 214, 90, 255));
+    };
+
+    if (horizontal) {
+        float cx = block_x;
+        for (int i = 0; i < count; i++) {
+            text(small, ImVec2(cx, y), label_color, metrics[i].label);
+            cx += label_w[i] + gap;
+            text(small, ImVec2(cx, y), metrics[i].color, metrics[i].value);
+            cx += value_w[i];
+            if (metrics[i].load >= 0) {
+                bar(cx + gap, y + (small - bar_h) / 2, metrics[i].load);
+                cx += gap + bar_w;
+            }
+            if (i == 0) {
+                // the credit beside the frame rate, dimmer
+                text(small, ImVec2(cx + gap, y), IM_COL32(200, 180, 150, 220), kFpsCredit);
+                cx += gap + credit_w;
+            }
+            if (i + 1 < count) cx += seg_gap;
+        }
+    } else {
+        float value_x = block_x + label_col + gap;
+        for (int i = 0; i < count; i++) {
+            float size = i == 0 ? big : small;
+            float ly = y + (i == 0 ? 0 : big + (i - 1) * small);
+            text(size, ImVec2(block_x, ly), label_color, metrics[i].label);
+            text(size, ImVec2(value_x, ly), metrics[i].color, metrics[i].value);
+            float after = value_x + value_w[i];
+            if (metrics[i].load >= 0) {
+                bar(after + gap, ly + (size - bar_h) / 2, metrics[i].load);
+                after += gap + bar_w;
+            }
+            if (i == 0) text(small, ImVec2(after + gap, ly + size - small), IM_COL32(200, 180, 150, 220), kFpsCredit);
+        }
+    }
+    if (goverlay) DrawFrameTimeGraph(dl, ImVec2(block_x, y + block_h - graph_h), block_w, graph_h);
 }
 
 void DrawUi(double fps) {

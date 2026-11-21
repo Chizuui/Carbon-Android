@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- JOIN DISCORD ditambah di GENERAL, di sebelah EXPORT LOG — tap untuk buka invite Discord buat lapor bug.
 - EXPORT LOG ditambah di GENERAL — sekali tap, log sesi ini disalin ke Download sebagai `carbon-log-<tanggal>-<jam>.log`, siap dikirim ke developer.
 - YELLOW TINT dihapus dari menu Carbon — setting itu mati, tidak ada efek di Carbon.
 - RENDER RESOLUTION menampilkan ukuran 3D yang benar (sebelumnya lebar dilebih-lebihkan 4/3x).

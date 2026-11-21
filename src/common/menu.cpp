@@ -154,6 +154,7 @@ const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", 
 constexpr const char* kDonateUrl = "https://sociabuzz.com/racas/tribe";
 constexpr const char* kGithubUrl = "https://github.com/RanggaCasper";
 constexpr const char* kYoutubeUrl = "https://youtube.com/c/@RanggaCasper";
+constexpr const char* kDiscordUrl = "https://discord.gg/4DTA7nVfh7";
 constexpr uint32_t kFpsCaps[] = {30, 60, 75, 90, 120, 144, 165, 240, 360, kFpsCapRefresh, 0};
 
 int StepIndex(int index, int step, int count) {
@@ -293,7 +294,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
              kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kShaderPreload, kBrightness, kLowEndPreset,
-             kMidPreset, kHighPreset, kExportLog };
+             kMidPreset, kHighPreset, kExportLog, kDiscord };
 
 using rows::Kind;
 using rows::Row;
@@ -348,6 +349,7 @@ constexpr Row kGeneralRows[] = {
     {Kind::Value, kAudioOutput, "AUDIO OUTPUT"},
     {Kind::Value, kSkipMovies, "SKIP MOVIES"},
     {Kind::Link, kExportLog, "EXPORT LOG"},
+    {Kind::Link, kDiscord, "JOIN DISCORD"},
 };
 
 // the panel's alone: the game's options menu (src/game/options_menu.cpp) shows no section of it
@@ -724,6 +726,7 @@ const char* LinkUrl(int id) {
         case kDonate: return kDonateUrl;
         case kGithub: return kGithubUrl;
         case kYoutube: return kYoutubeUrl;
+        case kDiscord: return kDiscordUrl;
         default: return nullptr;
     }
 }

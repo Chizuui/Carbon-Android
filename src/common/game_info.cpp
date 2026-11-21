@@ -117,7 +117,6 @@ const app::GameInfo app::kGame = {
                 {"fps_usage", &game::Opt().fps_usage, nullptr},
                 {"fps_temps", &game::Opt().fps_temps, nullptr},
                 {"fps_position", nullptr, &game::Opt().fps_position},
-                {"overlay_style", nullptr, &game::Opt().overlay_style},
                 {"overlay_layout", nullptr, &game::Opt().overlay_layout},
                 {"audio_output", nullptr, &game::Opt().audio_output},
                 {"aspect_ratio", nullptr, &game::Opt().aspect_ratio},

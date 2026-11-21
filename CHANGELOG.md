@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Overlay FPS sekarang cuma gaya GOverlay — panel gelap, bar load, sama grafik frame time; pilihan gaya lain dihapus. Ada metrik baru LATENCY (rata-rata frame time, misal "21.7 ms", warnanya hijau/kuning/merah); layout vertikal/horizontal tetap bisa dipilih.
 - Overlay FPS dirombak — gaya AFTERBURNER / GOVERLAY / CARBON, layout vertikal atau horizontal, angka FPS dan suhu berubah warna (hijau/kuning/merah), GOverlay ada bar load sama grafik frame time; semua bisa diatur di Tampilan > OVERLAY PERFORMA.
 - UI settings dirombak total — panel sidebar (Tampilan / Controller / Touch / Umum / Cheat / Kredit), halaman Controller ada tes input gamepad langsung dan rebind dikelompokkan, ada slider deadzone stick; editor layout touch tetap fullscreen, cuma tampilannya disesuaikan tema baru.
 - Crash abis menang bos diperbaiki (lanjutan) — guard ditambah ke satu lagi fungsi baca stat mobil yang ikut crash karena data mobil di career kosong; plus log diagnosa buat nyari letak data mobil yang bener di career.

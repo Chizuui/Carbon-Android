@@ -200,7 +200,10 @@ float4 psmain(O i) : SV_Target {
     // a HUD element's box: only its own bright pixels keep standard brightness. the box is mostly the world
     // showing through the element's transparent parts, and leaving that dark draws the box as a black rectangle
     // over the scene, even where the element is not drawn at all (the showcase). bright pixels barely move under
-    // the gamma curve, so gating on luma keeps the text and gauges while the world inside the box brightens
+    // the gamma curve, so gating on luma keeps the text and gauges while the world inside the box brightens.
+    // the panels themselves (minimap, EA Trax, race info, speedometer) have mid-tone backgrounds around luma
+    // 0.3-0.5, so a low gate left them half-brightened and still visible as a faint dark trace; only pixels
+    // near white are real HUD text, so the gate sits high
     float hud_mask = 0.0;
     int hud_count = (int)post.w;
     [unroll]
@@ -213,7 +216,7 @@ float4 psmain(O i) : SV_Target {
             }
         }
     }
-    hud_mask *= smoothstep(0.25, 0.5, Luma(c));
+    hud_mask *= smoothstep(0.7, 0.9, Luma(c));
     // the player's brightness as a gamma curve: applied to 3D world, while HUD elements keep standard brightness
     float b_val = lerp(post.z, 1.0, hud_mask);
     return float4(pow(saturate(c), float3(1.0 / b_val, 1.0 / b_val, 1.0 / b_val)), 1);

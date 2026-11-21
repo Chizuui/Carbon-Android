@@ -247,7 +247,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
-             kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kShaderPreload, kBrightness };
+             kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kShaderPreload, kBrightness, kLowEndPreset };
 
 using rows::Kind;
 using rows::Row;
@@ -259,6 +259,7 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kAspectRatio, "ASPECT RATIO"},
     {Kind::Value, kBrightness, "BRIGHTNESS"},
     {Kind::Heading, -1, "PERFORMANCE"},
+    {Kind::Link, kLowEndPreset, "LOW-END PRESET"},
     {Kind::Value, kVsync, "VERTICAL SYNC"},
     {Kind::Value, kMaxFps, "MAX FRAME RATE"},
     {Kind::Value, kFpsCounter, "FPS COUNTER"},
@@ -930,7 +931,7 @@ std::string rows::Value(const Row& r, int step) {
         case Kind::Value:
             return Ui(RowText(r.id, step));
         case Kind::Link:
-            return Ui("OPEN");
+            return Ui(r.id == kLowEndPreset ? "APPLY" : "OPEN");
         case Kind::Info:
             return r.id >= 0 && r.id < int(std::size(kCreditNames)) ? kCreditNames[r.id] : "";
         case Kind::Bind: {
@@ -952,7 +953,17 @@ std::string rows::Value(const Row& r, int step) {
 
 void rows::Activate(const Row& r) {
     if (r.kind == Kind::Link) {
-        if (r.id == kTouchEdit) touch::EditLayout();
+        if (r.id == kLowEndPreset) {
+            // one tap for a weak phone: half the render pixels, no bloom or motion blur, the car
+            // reflections only every fourth frame, no screen filter; the brightness stays as the player set it
+            game::Options& o = game::Opt();
+            o.bloom = false;
+            o.motion_blur = false;
+            o.reflections = 2;
+            o.screen_filter = 0;
+            Get().render_percent = 50;
+            Changed();
+        } else if (r.id == kTouchEdit) touch::EditLayout();
         else if (const char* url = LinkUrl(r.id)) SDL_OpenURL(url);
     } else if (r.kind == Kind::Bind && g_capture < 0 && g_pad_capture < 0) {
         g_capture_slot = 0;

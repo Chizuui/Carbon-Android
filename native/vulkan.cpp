@@ -194,7 +194,7 @@ float4 psmain(O i) : SV_Target {
         c *= v * 1.38;
     }
     c = saturate(c) * opts.w;
-    if (opts.x > 0) c = float3(lut.Sample(ps, float2(c.r, 0.5)).r, lut.Sample(ps, float2(c.g, 0.5)).g, lut.Sample(ps, float2(c.b, 0.5)).b);
+    if (opts.x > 0) c = float3(lut.Sample(ps, float2(c.r, 0.25)).r, lut.Sample(ps, float2(c.g, 0.25)).g, lut.Sample(ps, float2(c.b, 0.25)).b);
     // after the game's gamma ramp, so a brightness set high is held back too
     if (mode == 5) c = saturate(Hdr(c));
     // a HUD element's box: only its own bright pixels keep standard brightness. the box is mostly the world
@@ -217,9 +217,14 @@ float4 psmain(O i) : SV_Target {
         }
     }
     hud_mask *= smoothstep(0.7, 0.9, Luma(c));
-    // the player's brightness as a gamma curve: applied to 3D world, while HUD elements keep standard brightness
-    float b_val = lerp(post.z, 1.0, hud_mask);
-    return float4(pow(saturate(c), float3(1.0 / b_val, 1.0 / b_val, 1.0 / b_val)), 1);
+    // the player's brightness as a gamma curve: applied to 3D world, while HUD elements keep standard brightness.
+    // the curve is the gamma LUT's second row, a lookup instead of a per-pixel pow(); inside a HUD box the
+    // result lerps back to the plain colour, so the text and gauges stay at standard brightness
+    if (post.z != 1.0) {
+        float3 bc = float3(lut.Sample(ps, float2(c.r, 0.75)).r, lut.Sample(ps, float2(c.g, 0.75)).g, lut.Sample(ps, float2(c.b, 0.75)).b);
+        c = lerp(bc, c, hud_mask);
+    }
+    return float4(saturate(c), 1);
 }
 )";
 
@@ -1312,6 +1317,7 @@ private:
     uint8_t ramp_[768] = {};
     bool ramp_dirty_ = false;
     bool gamma_ = false;
+    float lut_brightness_ = -1.0f;  // the brightness the gamma LUT's second row was baked with
     Target* draw_rt_ = nullptr;
     Target* draw_ds_ = nullptr;
     uint32_t guest_w_ = 640, guest_h_ = 480;
@@ -1767,7 +1773,7 @@ void VulkanBackend::AwaitPoolReset(Frame& f) {
 
 bool VulkanBackend::CreateFixedImages() {
     constexpr VkImageUsageFlags kSampled = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    if (!CreateImage(lut_, kBgra, 256, 1, 1, 1, 1, kSampled, VK_IMAGE_VIEW_TYPE_2D) ||
+    if (!CreateImage(lut_, kBgra, 256, 2, 1, 1, 1, kSampled, VK_IMAGE_VIEW_TYPE_2D) ||
         !CreateImage(dummy_[0], kBgra, 1, 1, 1, 1, 1, kSampled, VK_IMAGE_VIEW_TYPE_2D) ||
         !CreateImage(dummy_[1], kBgra, 1, 1, 1, 1, 1, kSampled, VK_IMAGE_VIEW_TYPE_3D) ||
         !CreateImage(dummy_[2], kBgra, 1, 1, 1, 6, 1, kSampled, VK_IMAGE_VIEW_TYPE_CUBE, true) ||
@@ -2839,10 +2845,12 @@ void VulkanBackend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
 // The game's effect buffers, smaller than the frame and of its shape (Most Wanted's 320x240 glow and blur, its 80x60),
 // near the console's size. Their passes sample the frame and each other with a box of taps that grows with the scale
 // (FillTexelConstants), so at the frame's scale they cost its fourth power: most of the GPU's frame at 3x. They are
-// blurred anyway; square ones (reflections) and those drawn with a frame sized depth keep the frame's scale
+// blurred anyway, so they are capped at the console's scale; the square ones are the car-reflection cube faces,
+// blurred into the paint the same way, so they are capped too instead of rendering six views at the frame's scale
 float VulkanBackend::TargetScale(uint64_t key, uint32_t gw, uint32_t gh) const {
     bool effect = gw < guest_w_ && uint64_t(gw) * guest_h_ == uint64_t(gh) * guest_w_ && !full_scale_.count(key);
-    return effect ? std::min(scale_, kEffectScale) : scale_;
+    bool cube = gw == gh && gw < guest_w_ && !full_scale_.count(key);
+    return (effect || cube) ? std::min(scale_, kEffectScale) : scale_;
 }
 
 Target* VulkanBackend::EnsureTarget(const Surface& s, bool depth) {
@@ -3889,21 +3897,30 @@ void VulkanBackend::RenderUi() {
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), Cb());
 }
 
+// the gamma LUT, two rows: row 0 the game's own gamma ramp, row 1 the player's brightness curve. The present
+// shader used to apply the brightness as a per-pixel pow() (2.6M of them a frame on a 1080p phone); a lookup
+// into the second row is the same curve for a texture fetch, and the HUD mask lerps back to the plain colour
 void VulkanBackend::UploadGammaRamp() {
     ramp_dirty_ = false;
-    Alloc a = Upload(256 * 4, 16);
+    float brightness = float(std::clamp<uint32_t>(game::Opt().brightness, 50, 200)) / 100.0f;
+    Alloc a = Upload(256 * 2 * 4, 16);
     bool identity = true;
     for (int i = 0; i < 256; i++) {
-        uint8_t* p = a.cpu + i * 4;
-        p[0] = ramp_[512 + i];
-        p[1] = ramp_[256 + i];
-        p[2] = ramp_[i];
-        p[3] = 255;
+        uint8_t* p0 = a.cpu + i * 4;
+        p0[0] = ramp_[512 + i];
+        p0[1] = ramp_[256 + i];
+        p0[2] = ramp_[i];
+        p0[3] = 255;
+        uint8_t* p1 = a.cpu + (256 + i) * 4;
+        uint8_t b = uint8_t(std::lround(std::pow(float(i) / 255.0f, 1.0f / brightness) * 255.0f));
+        p1[0] = p1[1] = p1[2] = b;
+        p1[3] = 255;
         identity &= ramp_[i] == i && ramp_[256 + i] == i && ramp_[512 + i] == i;
     }
     gamma_ = !identity;
+    lut_brightness_ = brightness;
     Transition(lut_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    VkBufferImageCopy c{a.off, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {256, 1, 1}};
+    VkBufferImageCopy c{a.off, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {256, 2, 1}};
     vkCmdCopyBufferToImage(Cb(), a.buf, lut_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
     Transition(lut_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
@@ -3978,7 +3995,9 @@ void VulkanBackend::SavePipelineCache() {
 void VulkanBackend::Present(const Surface& front) {
     Target* t = EnsureTarget(front, false);
     if (t && LatchCpuWrite(*t)) UploadTarget(*t, front);
-    if (ramp_dirty_) UploadGammaRamp();
+    // the brightness curve lives in the LUT's second row, so a changed brightness re-bakes it
+    float brightness = float(std::clamp<uint32_t>(game::Opt().brightness, 50, 200)) / 100.0f;
+    if (ramp_dirty_ || brightness != lut_brightness_) UploadGammaRamp();
     uint32_t index = 0;
     auto at = std::chrono::steady_clock::now();
     bool shown = AcquireImage(index);

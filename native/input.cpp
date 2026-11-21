@@ -230,8 +230,21 @@ void ApplyBinds(SDL_Gamepad* pad, Pad& p, const PadBinds& binds) {
         for (int i = 0; i < n; i++)
             if (Matches(*list[i], s)) Clear(p, OutputCode(*list[i], s));
     }
-    SDL_free(list);
+    // A trigger is both a button and an axis on some controllers, and a bind captured as the button leaves
+    // the axis-mapped default (black / white) firing, so the old button-form bind still double-fires. A
+    // bound button with no gamepad mapping of its own, held while a trigger axis is pulled, is that
+    // trigger's button form: clear the trigger's default too.
     SDL_Joystick* joy = SDL_GetGamepadJoystick(pad);
+    for (const Source& s : binds) {
+        if (s.kind != 'b' || !SDL_GetJoystickButton(joy, s.index)) continue;
+        bool mapped = false;
+        for (int i = 0; i < n; i++)
+            if (list[i]->input_type == SDL_GAMEPAD_BINDTYPE_BUTTON && list[i]->input.button == s.index) mapped = true;
+        if (mapped) continue;
+        if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 8000) Clear(p, 4);  // black
+        if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 8000) Clear(p, 5);   // white
+    }
+    SDL_free(list);
     float dirs[8] = {};
     for (size_t a = 0; a < kPadCount; a++)
         if (binds[a].kind && binds[a].kind != 'k') Press(p, dirs, kPadActions[a].code, Value(joy, binds[a]));

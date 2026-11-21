@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Rebind trigger beneran tidak dobel lagi — bind lama bentuk tombol juga ikut dibersihkan, jadi R2 cuma gas, kamera tidak ikut ganti tiap tap gas.
 - Rebind trigger tidak dobel lagi — pas ganti Right Trigger dari R1 ke R2, R2 cuma jalanin Right Trigger, tidak ikut kepencet fungsi lamanya.
 - Analog tidak tembus lagi pas buka settings — stick menu depan disembunyikan selama panel settings terbuka.
 - JOIN DISCORD ditambah di GENERAL, di sebelah EXPORT LOG — tap untuk buka invite Discord buat lapor bug.

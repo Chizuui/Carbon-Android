@@ -672,6 +672,18 @@ X86_FUNC(sub_00242FD0) {
             } else {
                 LOGR("career: car_db empty [0]=%08X/%08X [1]=%08X/%08X", kernel::R32(car_db),
                      kernel::R32(car_db + 8u), kernel::R32(car_db + 0x14u), kernel::R32(car_db + 0x1Cu));
+                // Diagnostic: the car handle must live somewhere in the career struct — if it is not
+                // in car_db (career+0x234) the offset may be wrong for Carbon. Scan for it once.
+                if (game::IsCommittedRange(career, 0x3000u)) {
+                    int found = 0;
+                    for (uint32_t off = 0; off < 0x3000u && found < 4; off += 4u) {
+                        if (kernel::R32(career + off) == h) {
+                            LOGR("career: handle %08X found at career+0x%X", h, off);
+                            found++;
+                        }
+                    }
+                    if (!found) LOGR("career: handle %08X not found in career+0..0x3000", h);
+                }
             }
         }
     }
@@ -699,6 +711,50 @@ X86_FUNC(sub_002881C0) {
         return;
     }
     __imp__sub_002881C0(ctx, base);
+}
+
+// Guard the car-stat float read (0x27C6A0) — same bad-car object as 0x2881C0: when the career's
+// car_db is empty the table pointer [[obj+0x0C]+0x10] is null, and [table+idx*4] (or fld [eax])
+// faults on guest 0 (SIGSEGV, addr 0x100000000). Mirror the function's own fallback: push the
+// default float from 0x3A3880 and return (ret 4: return address + 1 arg).
+X86_EXTERN_FUNC(__imp__sub_0027C6A0);
+X86_FUNC(sub_0027C6A0) {
+    auto ret_default = [&]() {
+        float def = game::IsCommittedRange(0x3A3880u, 4) ? X86_MEMF32(0x3A3880u) : 0.0f;
+        x87_push(ctx, (double)def);
+        ctx.esp += 8;  // ret 4
+    };
+    uint32_t obj = ctx.ecx;
+    if (!game::IsCommittedRange(obj, 0x20u)) {
+        LOGR("career: sub_0027C6A0 bad obj %08X", obj);
+        ret_default();
+        return;
+    }
+    uint32_t p0c = kernel::R32(obj + 0x0Cu);
+    uint32_t p18 = kernel::R32(obj + 0x18u);
+    if (!p0c || !p18) {
+        ret_default();
+        return;
+    }
+    if (!game::IsCommittedRange(p0c + 0x10u, 4)) {
+        LOGR("career: sub_0027C6A0 bad [obj+0x0C]+0x10 (obj %08X p0c %08X)", obj, p0c);
+        ret_default();
+        return;
+    }
+    uint32_t table = kernel::R32(p0c + 0x10u);
+    uint32_t idx = kernel::R32(ctx.esp + 4);
+    if (!table || !game::IsCommittedRange(table + idx * 4u, 4)) {
+        LOGR("career: sub_0027C6A0 bad table %08X idx %u (obj %08X)", table, idx, obj);
+        ret_default();
+        return;
+    }
+    uint32_t addr = kernel::R32(table + idx * 4u) + p18;
+    if (!game::IsCommittedRange(addr, 4)) {
+        LOGR("career: sub_0027C6A0 bad stat addr %08X (obj %08X)", addr, obj);
+        ret_default();
+        return;
+    }
+    __imp__sub_0027C6A0(ctx, base);
 }
 
 // Guard STRM ring-buffer walk (0xC1B30) against uncommitted guest pointers on the background streamer thread.

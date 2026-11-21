@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Crash abis menang bos diperbaiki (lanjutan) — guard ditambah ke satu lagi fungsi baca stat mobil yang ikut crash karena data mobil di career kosong; plus log diagnosa buat nyari letak data mobil yang bener di career.
 - Crash abis menang bos diperbaiki — game tidak lagi ketutup sendiri pas balik ke garasi, penyebabnya pointer mobil yang rusak karena data mobil di career kosong.
 - Tap di menu tidak auto-confirm lagi — tap buat milih mobil bos atau huruf pas ketik nama cuma milih/highlight aja, confirm-nya pencet tombol A sendiri.
 - Rebind trigger beneran tidak dobel lagi — bind lama bentuk tombol juga ikut dibersihkan, jadi R2 cuma gas, kamera tidak ikut ganti tiap tap gas.

@@ -247,7 +247,8 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
              kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
-             kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kShaderPreload, kBrightness, kLowEndPreset };
+             kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kShaderPreload, kBrightness, kLowEndPreset,
+             kMidPreset, kHighPreset };
 
 using rows::Kind;
 using rows::Row;
@@ -260,6 +261,8 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kBrightness, "BRIGHTNESS"},
     {Kind::Heading, -1, "PERFORMANCE"},
     {Kind::Link, kLowEndPreset, "LOW-END PRESET"},
+    {Kind::Link, kMidPreset, "MID PRESET"},
+    {Kind::Link, kHighPreset, "HIGH PRESET"},
     {Kind::Value, kVsync, "VERTICAL SYNC"},
     {Kind::Value, kMaxFps, "MAX FRAME RATE"},
     {Kind::Value, kFpsCounter, "FPS COUNTER"},
@@ -931,7 +934,7 @@ std::string rows::Value(const Row& r, int step) {
         case Kind::Value:
             return Ui(RowText(r.id, step));
         case Kind::Link:
-            return Ui(r.id == kLowEndPreset ? "APPLY" : "OPEN");
+            return Ui(r.id == kLowEndPreset || r.id == kMidPreset || r.id == kHighPreset ? "APPLY" : "OPEN");
         case Kind::Info:
             return r.id >= 0 && r.id < int(std::size(kCreditNames)) ? kCreditNames[r.id] : "";
         case Kind::Bind: {
@@ -962,6 +965,26 @@ void rows::Activate(const Row& r) {
             o.reflections = 2;
             o.screen_filter = 0;
             Get().render_percent = 50;
+            Changed();
+        } else if (r.id == kMidPreset) {
+            // balanced: two thirds of the render pixels, bloom on, no motion blur, the car reflections
+            // every second frame, no screen filter; the brightness stays as the player set it
+            game::Options& o = game::Opt();
+            o.bloom = true;
+            o.motion_blur = false;
+            o.reflections = 1;
+            o.screen_filter = 0;
+            Get().render_percent = 67;
+            Changed();
+        } else if (r.id == kHighPreset) {
+            // everything on: full render pixels, bloom and motion blur on, the car reflections every
+            // frame, no screen filter; the brightness stays as the player set it
+            game::Options& o = game::Opt();
+            o.bloom = true;
+            o.motion_blur = true;
+            o.reflections = 0;
+            o.screen_filter = 0;
+            Get().render_percent = 100;
             Changed();
         } else if (r.id == kTouchEdit) touch::EditLayout();
         else if (const char* url = LinkUrl(r.id)) SDL_OpenURL(url);

@@ -348,9 +348,16 @@ void MergeLoose(Pad& p, const PadBinds& binds) {
     if (l.hy > 0.5f) p.buttons |= 1 << 1;
     if (l.hx < -0.5f) p.buttons |= 1 << 2;
     if (l.hx > 0.5f) p.buttons |= 1 << 3;
-    // the triggers' axes are L2 / R2: white and black
-    p.analog[5] = std::max(p.analog[5], Trigger(l.lt));
-    p.analog[4] = std::max(p.analog[4], Trigger(l.rt));
+    // the triggers' axes are L2 / R2: white and black, unless that trigger is bound to another action, in
+    // which case the key's bind already presses it and the axis must not also fire its default
+    bool l2_bound = false, r2_bound = false;
+    for (size_t a = 0; a < kPadCount; a++) {
+        if (binds[a].kind != 'k') continue;
+        if (binds[a].index == 104) l2_bound = true;  // BUTTON_L2
+        if (binds[a].index == 105) r2_bound = true;  // BUTTON_R2
+    }
+    if (!l2_bound) p.analog[5] = std::max(p.analog[5], Trigger(l.lt));
+    if (!r2_bound) p.analog[4] = std::max(p.analog[4], Trigger(l.rt));
     // Android's y is down, the pad's up
     auto further = [](int16_t& to, int16_t v) { if (std::abs(int(v)) > std::abs(int(to))) to = v; };
     further(p.lx, Axis(l.lx));
@@ -542,18 +549,20 @@ std::string PressedPadInput() {
         for (SDL_Gamepad* pad : g_pads) {
             SDL_Joystick* joy = pad ? SDL_GetGamepadJoystick(pad) : nullptr;
             if (!joy) continue;
-            for (int i = 0; i < SDL_GetNumJoystickButtons(joy); i++)
-                if (SDL_GetJoystickButton(joy, i)) return SourceText({'b', i});
-            for (int i = 0; i < SDL_GetNumJoystickHats(joy); i++)
-                for (const HatDir& d : kHatDirs)
-                    if (SDL_GetJoystickHat(joy, i) & d.bit) return SourceText({'h', i, d.bit});
-            // an axis well away from where it rested: a stick pushed or a trigger pulled
+            // an axis well away from where it rested: a stick pushed or a trigger pulled. Axes first: a
+            // trigger is both a button and an axis on some controllers, but SDL maps it as an axis, so
+            // capturing the button form would leave its default (black / white) firing alongside the bind
             for (int i = 0; i < SDL_GetNumJoystickAxes(joy); i++) {
                 Sint16 rest = 0;
                 SDL_GetJoystickAxisInitialState(joy, i, &rest);
                 int moved = int(SDL_GetJoystickAxis(joy, i)) - int(rest);
                 if (std::abs(moved) > 20000) return SourceText({'a', i, moved > 0 ? 1 : -1});
             }
+            for (int i = 0; i < SDL_GetNumJoystickButtons(joy); i++)
+                if (SDL_GetJoystickButton(joy, i)) return SourceText({'b', i});
+            for (int i = 0; i < SDL_GetNumJoystickHats(joy); i++)
+                for (const HatDir& d : kHatDirs)
+                    if (SDL_GetJoystickHat(joy, i) & d.bit) return SourceText({'h', i, d.bit});
         }
     }
     std::lock_guard lock(g_loose_lock);

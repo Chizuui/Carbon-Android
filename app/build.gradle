@@ -20,7 +20,7 @@ preBuild.dependsOn "fetchSDL"
 def gameName = project.hasProperty("game") ? project.game : "mostwanted"
 def games = [
     mostwanted: [dir: "MostWanted", label: "Most Wanted", settings: "mostwanted.toml", log: "mostwanted", repo: "RanggaCasper/MostWanted-Android"],
-    carbon    : [dir: "Carbon",     label: "NFS Carbon",  settings: "carbon.toml",     log: "carbon",     repo: ""],
+    carbon    : [dir: "Carbon",     label: "NFS Carbon",  settings: "carbon.toml",     log: "carbon",     repo: "Chizuui/Carbon-Android"],
 ]
 def game = games[gameName]
 

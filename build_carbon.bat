@@ -16,21 +16,30 @@ set "VSWHERE=%PF86%\Microsoft Visual Studio\Installer\vswhere.exe"
 set "TOOLS=%CD%\out\build\android-tools-carbon"
 if not defined ANDROID_HOME set "ANDROID_HOME=D:\DevTools\Android_Studio_Sdk"
 set "NDK=%ANDROID_HOME%\ndk\28.2.13676358"
-set "SDKCMAKE=%ANDROID_HOME%\cmake\3.22.1\bin"
+rem CMake 3.31.6 is what the release workflow installs; 3.22.1 stays as a fallback for a PC that only has that
+set "SDKCMAKE=%ANDROID_HOME%\cmake\3.31.6\bin"
+if not exist "%SDKCMAKE%\cmake.exe" set "SDKCMAKE=%ANDROID_HOME%\cmake\3.22.1\bin"
 
 rem ---------------------------------------------------------------- tools
 echo [1/5] Tools
 if not exist "%ANDROID_HOME%\platforms" goto :nosdk
 if not exist "%NDK%\toolchains\llvm\prebuilt\windows-x86_64\bin\clang-cl.exe" goto :nosdk
 if not exist "%SDKCMAKE%\cmake.exe" goto :nosdk
-set "VSDIR=D:\VisualStudioAPP\VisualStudio"
-call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64 -vcvars_ver=14.44 >nul
+for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSDIR=%%i"
+if not defined VSDIR set "VSDIR=D:\VisualStudioAPP\VisualStudio"
+if not exist "%VSDIR%\Common7\Tools\VsDevCmd.bat" (
+    echo       Visual Studio with "Desktop development with C++" was not found: the recompiler links with its tools.
+    goto :fail
+)
+rem -vcvars_ver is this PC's toolset; the release workflow's Visual Studio takes the default one
+if defined CI ( call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64 >nul ) else ( call "%VSDIR%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64 -vcvars_ver=14.44 >nul )
 set "PATH=%SDKCMAKE%;%PATH%"
 rem Visual Studio's own Clang when it has it, else the NDK's: both build the recompiler for Windows
 set "CLANGCL=%VSDIR%/VC/Tools/Llvm/x64/bin/clang-cl.exe"
 if not exist "%CLANGCL%" set "CLANGCL=%NDK%/toolchains/llvm/prebuilt/windows-x86_64/bin/clang-cl.exe"
 where git >nul 2>nul || (echo       git is missing: https://git-scm.com/download/win & goto :fail)
-set "JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot"
+rem the release workflow's setup-java provides JAVA_HOME already; only fall back to the local JDK otherwise
+if not defined JAVA_HOME set "JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot"
 
 rem ---------------------------------------------------------------- the xbe
 echo [2/5] %GAME_XBE%
@@ -64,7 +73,14 @@ echo [4/5] Recompiling %GAME_XBE% into %GEN_DIR%
 rem ---------------------------------------------------------------- Android
 echo [5/5] APK: the game code for arm64, 30 to 90 minutes the first time
 if not exist local.properties echo sdk.dir=%ANDROID_HOME:\=/%> local.properties
-rem GRADLE_ARGS: more for Gradle, as the release workflow's -PversionCode and -PversionName
+rem version: UTC date-hour, the same scheme the release workflow and the server build script use, so
+rem GoFile, PC and CI builds share one version space; the workflow passes its own through GRADLE_ARGS
+echo %GRADLE_ARGS% | findstr /C:"-PversionCode" >nul
+if %ERRORLEVEL%==0 goto :haveversion
+for /f %%i in ('powershell -NoProfile -Command "Get-Date -AsUTC -Format yyyyMMddHH"') do set "VCODE=%%i"
+for /f %%i in ('powershell -NoProfile -Command "Get-Date -AsUTC -Format yyyy.MM.dd.HH"') do set "VNAME=%%i"
+set "GRADLE_ARGS=%GRADLE_ARGS% -PversionCode=%VCODE% -PversionName=%VNAME%"
+:haveversion
 call gradlew.bat assembleRelease -Pgame=carbon -PxbeGenerated="%GEN_DIR%" -PxbeImage=assets/%GAME_XBE% -PxbeConfig=%GAME_TOML% -PxbeGameDir=carbon -PappId=com.racas.carbon %GRADLE_ARGS% || goto :fail
 
 echo.

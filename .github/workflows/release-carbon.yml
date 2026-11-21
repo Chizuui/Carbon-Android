@@ -1,0 +1,143 @@
+# Builds the Carbon APK and publishes it as a GitHub release on every push to main. Run by hand
+# (Actions > Release Carbon > Run workflow), it only uploads the APK as an artifact. The recompiler
+# needs default.xbe: ci/carbon.xbe.enc, decrypted with the CARBON_XBE_KEY secret. To make it, from
+# Git Bash at the repo root:
+#   openssl enc -aes-256-cbc -md sha256 -pbkdf2 -iter 200000 -salt -in assets/default.xbe -out ci/carbon.xbe.enc -pass pass:<key>
+#
+# Secrets: CARBON_XBE_KEY (the passphrase of ci/carbon.xbe.enc), KEYSTORE_BASE64 (the release .jks
+# in base64), KEYSTORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD. Without the keystore the release cannot
+# be signed with the key the testers already have, so the build fails instead of publishing an APK
+# that would not install as an update.
+name: Release Carbon
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 300
+    env:
+      NDK_VERSION: 28.2.13676358
+      CMAKE_VERSION: 3.31.6
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # the tags and commits, for the list of changes since the previous release
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Android SDK packages
+        shell: cmd
+        run: call "%ANDROID_HOME%\cmdline-tools\latest\bin\sdkmanager.bat" --install "platforms;android-34" "ndk;%NDK_VERSION%" "cmake;%CMAKE_VERSION%" >nul
+
+      - name: Decrypt default.xbe
+        shell: bash
+        env:
+          CARBON_XBE_KEY: ${{ secrets.CARBON_XBE_KEY }}
+        run: |
+          if [ -z "$CARBON_XBE_KEY" ]; then echo "::error::The CARBON_XBE_KEY secret is missing"; exit 1; fi
+          if [ ! -f ci/carbon.xbe.enc ]; then echo "::error::ci/carbon.xbe.enc is missing"; exit 1; fi
+          mkdir -p assets
+          # through a file: Git Bash rewrites an environment value that looks like a path (the key may start with /)
+          # before a Windows program such as openssl sees it
+          key="$RUNNER_TEMP/xbe.key"
+          # no line ending: a key saved on Windows can carry a CR that the secret then keeps
+          printf '%s' "$CARBON_XBE_KEY" | tr -d '\r\n' > "$key"
+          openssl enc -d -aes-256-cbc -md sha256 -pbkdf2 -iter 200000 -in ci/carbon.xbe.enc -out assets/default.xbe -pass "file:$key"
+          rm -f "$key"
+          # the one supported image: anything else recompiles to a broken game
+          sha=$(sha1sum assets/default.xbe | cut -d' ' -f1)
+          echo "default.xbe SHA-1 $sha"
+          if [ "$sha" != "c9c6f930c33909217a56894e8a51664404fd85b6" ]; then echo "::error::default.xbe is not the supported image"; exit 1; fi
+
+      - name: Release key
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then echo "::error::The KEYSTORE_BASE64 secret is missing: a release signed with another key would not install over the app the testers already have"; exit 1; fi
+          if [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then echo "::error::A keystore password secret is missing"; exit 1; fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "BLACK_KEYSTORE=$RUNNER_TEMP/release.jks"
+            echo "BLACK_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "BLACK_KEY_ALIAS=$KEY_ALIAS"
+            echo "BLACK_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          # UTC date-hour: every build is newer than the last, and the same scheme is used by the
+          # server build script and build_carbon.bat, so GoFile, PC and CI builds share one version space
+          code=$(date -u +%Y%m%d%H)
+          name=$(date -u +%Y.%m.%d.%H)
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "tag=v$name" >> "$GITHUB_OUTPUT"
+          echo "GRADLE_ARGS=-PversionCode=$code -PversionName=$name" >> "$GITHUB_ENV"
+
+      - name: Build
+        shell: cmd
+        run: call build_carbon.bat
+
+      - name: Name the APK
+        shell: bash
+        run: mv app/build/outputs/apk/release/app-release.apk "Carbon-${{ steps.version.outputs.name }}.apk"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: Carbon-${{ steps.version.outputs.name }}
+          path: Carbon-${{ steps.version.outputs.name }}.apk
+          if-no-files-found: error
+
+      - name: Release notes
+        shell: bash
+        run: |
+          apk="Carbon-${{ steps.version.outputs.name }}.apk"
+          size=$(awk -v b="$(stat -c %s "$apk")" 'BEGIN { printf "%.1f MB", b / 1048576 }')
+          sha=$(sha256sum "$apk" | cut -d' ' -f1)
+          sed -e "s|{{VERSION}}|${{ steps.version.outputs.tag }}|g" -e "s|{{TAG}}|${{ steps.version.outputs.tag }}|g" -e "s|{{APK}}|$apk|g" \
+              -e "s|{{SIZE}}|$size|g" -e "s|{{SHA256}}|$sha|g" -e "s|{{REPO}}|$GITHUB_REPOSITORY|g" \
+              ci/release-notes-carbon.md > "$RUNNER_TEMP/release-notes.md"
+          # the commits since the previous release tag, which the app's update dialog shows too;
+          # the first release has no previous tag, so it lists the newest 30 commits instead
+          prev=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          {
+            echo
+            echo "## What's Changed"
+            echo
+            if [ -n "$prev" ]; then
+              git log --no-merges --pretty='* %s' "$prev..HEAD"
+            else
+              git log --no-merges --pretty='* %s' -30 HEAD
+            fi
+          } >> "$RUNNER_TEMP/release-notes.md"
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: NFS Carbon for Android ${{ steps.version.outputs.tag }}
+          body_path: ${{ runner.temp }}/release-notes.md
+          files: Carbon-${{ steps.version.outputs.name }}.apk
+          make_latest: true

@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cwchar>
 #include <iterator>
 #include <map>
 #include <string>
@@ -391,8 +392,11 @@ bool StepDisplayRow(int id, int step, Settings& s, char (&text)[64]) {
             // 20% to 200% in steps of 5
             if (step) s.render_percent = uint32_t(StepRange(int(s.render_percent), 20, 200, 5, step));
             Mode out = Output();
-            std::snprintf(text, sizeof(text), "%u%% (%ux%u)", s.render_percent, out.width * s.render_percent / 100,
-                          out.height * s.render_percent / 100);
+            // the 3D render is the 640x480 guest scaled, not the display scaled: the height is the display
+            // height times the percent, the width is that height times the guest's 4:3 aspect
+            uint32_t h = out.height * s.render_percent / 100;
+            uint32_t w = h * 4 / 3;
+            std::snprintf(text, sizeof(text), "%u%% (%ux%u)", s.render_percent, w, h);
             return true;
         }
         case kAspectRatio: {
@@ -749,6 +753,9 @@ void DrawRows(int page) {
     const Row* list = rows::Page(page, &count);
     for (size_t i = 0; i < count; i++) {
         const Row& r = list[i];
+        // YELLOW TINT is a dead setting in Carbon (no Carbon hook applies it), so hide the row there; Most
+        // Wanted keeps it, its tint hook lives in src/game/game.cpp
+        if (r.id == kYellowTint && std::wcscmp(kGame.short_title, L"NFS Carbon") == 0) continue;
         if (r.kind == Kind::Heading) Section(r.label);
         else if (r.kind == Kind::Value) ValueRow(r);
         else if (r.kind == Kind::Link) LinkRow(r);

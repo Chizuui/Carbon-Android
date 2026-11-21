@@ -31,24 +31,24 @@ struct Options {
     bool bloom = true;  // the glow added over the frame, native/vulkan.cpp skips it when off
     bool fog = true;    // the distance fog, native/vulkan.cpp draws without it when off
     // the cars' reflection, six more views: drawn every frame (0), every 2nd (1), every 4th (2) or off (3, a grey
-    // cube read instead); src/game/game.cpp's ApplyGraphicsSwitches
+    // cube read instead); the per-game ApplyGraphicsSwitches (src/carbon/carbon.cpp for Carbon)
     uint32_t reflections = 0;
     bool particles = true;    // tyre smoke, sparks and crash debris, the same
     bool shadows = true;      // the shadows under the cars, the same; the trees' and buildings', native/vulkan.cpp
     bool road_reflections = true;  // the wet road's reflection, the same
-    bool rain = true;         // the falling rain, src/game/game.cpp
+    bool rain = true;         // the falling rain, the per-game rain hook
     bool rain_drops = true;   // the drops on the screen in the rain, the same
-    bool yellow_tint = false;  // the game's yellow colour grading, src/game/game.cpp greys it when off
+    bool yellow_tint = false;  // the game's yellow colour grading, Most Wanted only (src/game/game.cpp greys it when off); Carbon has no tint hook, the row is hidden there
     bool shader_preload = false;  // native/vulkan.cpp makes earlier runs' shaders and pipelines at the start
-    bool motion_blur = true;   // the blur by speed and the nitrous' radial blur, src/game/game.cpp skips them when off
+    bool motion_blur = true;   // the blur by speed and the nitrous' radial blur, the per-game motion-blur hook skips them when off
     bool light_flares = false;  // the headlight, street light and neon flares, src/carbon/carbon.cpp skips eRenderLightFlares when off
-    // cheats, src/game/game.cpp's ApplyCheats
+    // cheats, the per-game ApplyCheats
     bool cheat_nos = false;           // the nitrous never runs out
     bool cheat_speedbreaker = false;  // the speedbreaker never runs out
     bool cheat_cash = false;          // the career's cash kept at kCheatCash
     bool cheat_no_police = false;     // no new cops or pursuits
     bool cheat_unlock_all = false;    // every car, part and race unlocked
-    bool skip_movies = false;         // the movies end as they start, src/game/game.cpp
+    bool skip_movies = false;         // the movies end as they start, the per-game skip-movies flag
     uint32_t audio_output = 0;  // audio::kOutputAuto, kOutputStereo, kOutputSurround or kOutputMono
     std::string language = "int";  // one of kLanguages
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
@@ -64,9 +64,9 @@ inline std::atomic<bool> g_focus_paused{false};  // the game thread waits while 
 inline std::atomic<uint32_t> g_focus_pauses{0};  // focus pauses ended so far
 inline std::atomic<bool> g_flare_pass{false};  // the eRenderLightFlares pass is running; d3d logs its draws
 void WaitWhileUnfocused();  // native/game_host.cpp: game thread, before the present
-void WidenAspect();         // src/game/game.cpp: game thread, at each present
-void ApplyGraphicsSwitches();  // src/game/game.cpp: game thread, at each present
-void ApplyCheats();            // src/game/game.cpp: game thread, at each present
-bool Racing();    // src/game/game.cpp, any thread: the game flow is in a race (free roam too), not loading or the front end
+void WidenAspect();         // the per-game hooks: game thread, at each present
+void ApplyGraphicsSwitches();  // the per-game hooks: game thread, at each present
+void ApplyCheats();            // the per-game hooks: game thread, at each present
+bool Racing();    // the per-game hooks, any thread: the game flow is in a race (free roam too), not loading or the front end
 
 }  // namespace game

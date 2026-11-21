@@ -3406,6 +3406,13 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     if (!game::Opt().bloom && stages.small && draw_rt_ && draw_rt_->gw == guest_w_ && draw_rt_->gh == guest_h_ &&
         SimpleState(s, kMBlendEnable) && SimpleState(s, kMSrcBlend) == kBlendOne && SimpleState(s, kMDestBlend) == kBlendOne)
         return;
+    // BLOOM off: the glow's downsample and blur go away too, not just the add-back. They render into the bloom
+    // target, a 4:3 effect buffer smaller than half the frame (160x120 or 80x60); the pause blur's half-res
+    // target (320x240) and the square reflection-cube faces are not touched. The game's own bloom switch
+    // (0x401D14) cannot be used for this: writing it 0 breaks the scene
+    if (!game::Opt().bloom && draw_rt_ && draw_rt_->gw < guest_w_ / 2 && draw_rt_->gh < guest_h_ / 2 &&
+        uint64_t(draw_rt_->gw) * guest_h_ == uint64_t(draw_rt_->gh) * guest_w_)
+        return;
     // SHADOWS off: the trees' and buildings' shadows on the road are the frame's one 2x multiply (DST_COLOR, SRC_COLOR)
     constexpr uint32_t kBlendDstColor = 0x306, kBlendSrcColor = 0x300;
     if (!game::Opt().shadows && draw_rt_ && draw_rt_->gw == guest_w_ && draw_rt_->gh == guest_h_ &&

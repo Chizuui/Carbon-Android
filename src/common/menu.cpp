@@ -162,9 +162,9 @@ constexpr uint32_t kAudioOutputs[] = {audio::kOutputAuto, audio::kOutputMono, au
 const char* const kAudioOutputNames[] = {"AUTOMATIC", "MONO", "2.0 STEREO", "5.1 SURROUND"};
 const char* const kLanguageNames[] = {"ENGLISH", "FRENCH", "GERMAN", "ITALIAN", "SPANISH",
                                       "INDONESIAN"};  // as game::kLanguages
-constexpr const char* kDonateUrl = "https://sociabuzz.com/racas/tribe";
-constexpr const char* kGithubUrl = "https://github.com/RanggaCasper";
-constexpr const char* kYoutubeUrl = "https://youtube.com/c/@RanggaCasper";
+constexpr const char* kDonateUrl = "https://sociabuzz.com/chizuui/tribe";
+constexpr const char* kGithubUrl = "https://github.com/Chizuui/Carbon-Android";
+constexpr const char* kYoutubeUrl = "https://youtube.com/@sashachan1?si=hCetsT_IV_9tSrpa";
 constexpr const char* kDiscordUrl = "https://discord.gg/4DTA7nVfh7";
 constexpr uint32_t kFpsCaps[] = {30, 60, 75, 90, 120, 144, 165, 240, 360, kFpsCapRefresh, 0};
 

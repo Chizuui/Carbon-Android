@@ -1065,6 +1065,35 @@ const char* OptMsgName(uint32_t h) {
     }
 }
 
+// ---- native ANDROID tab in the game's OPTIONS menu ----
+// The tab is index 7: free (indices 1,2,6,9 are real categories), its pick routes to
+// FeOptionsScreen.fng, and setup mode 7 is an empty no-op case. Its rows are made by the
+// game's row factory 0x14E7A0 with the AUDIO type IDs, because the factory hardcodes each
+// type's template hash: there is no factory type for a port setting. So the rows carry
+// AUDIO labels and are NOT bound to the game profile — Left/Right on them is intercepted
+// (0x154870) and steps the port's own settings (app::rows) instead. The row labels stay
+// wrong until the row text can be overridden (the .fng OPTION_N text); the values the rows
+// change are the port's, and they save to carbon.toml. The tab label itself is also
+// unknown until tested (it comes from the .fng text widget / a string lookup by index).
+// See the RE report (native-options-RE.md).
+
+// Call a game thiscall that takes one stack arg and is ret 0x04 (0x1475C0, 0x14E7A0):
+// push the arg, push a dummy return address, set ecx, call the original. The callee pops
+// both, so the stack is as it was; the caller's regs are restored.
+using X86Fn = void (*)(X86Context&, uint8_t*);
+uint32_t CallGameThis1(X86Context& ctx, uint8_t* base, X86Fn fn, uint32_t self, uint32_t arg) {
+    uint32_t saved_eax = ctx.eax, saved_ecx = ctx.ecx, saved_edx = ctx.edx;
+    X86_PUSH32(arg);
+    X86_PUSH32(0u);
+    ctx.ecx = self;
+    fn(ctx, base);
+    uint32_t ret = ctx.eax;
+    ctx.eax = saved_eax;
+    ctx.ecx = saved_ecx;
+    ctx.edx = saved_edx;
+    return ret;
+}
+
 // 0x154CF0 (Setup, vtable slot 0xFC): thiscall, no stack args. Switches on [this+4] (mode);
 // one case creates the tab icons via 0x1475C0 with indices 0,3,4,5,(8,0x0A,0x0B). Called on
 // mode changes / menu open, so every call is logged.
@@ -1079,12 +1108,19 @@ X86_FUNC(sub_00154CF0) {
 
 // 0x1475C0 (tab/icon creation): thiscall, index = [esp+4] (0..10, jump table -> texture hash).
 // Logs the index being created; the per-index texture hashes are already known statically.
+// ANDROID tab: the game's setup creates icons 0,3,4,5,(8,0x0A,0x0B); index 7 is free and
+// its pick routes to FeOptionsScreen.fng (setup mode 7 is an empty no-op case), so it is
+// added after 5, before 8.
 X86_EXTERN_FUNC(__imp__sub_001475C0);
 X86_FUNC(sub_001475C0) {
     uint32_t self = ctx.ecx;
     uint32_t index = kernel::R32(ctx.esp + 4);
     __imp__sub_001475C0(ctx, base);
     LOGR("opt: 1475C0 icon this=%08X index=%u ret=%08X pkg=%s", self, index, ctx.eax, OptPkg());
+    if (index == 5) {
+        uint32_t ret = CallGameThis1(ctx, base, __imp__sub_001475C0, self, 7);
+        LOGR("opt: 1475C0 icon ANDROID this=%08X index=7 ret=%08X pkg=%s", self, ret, OptPkg());
+    }
 }
 
 // 0x13F0B0 (screen-pick, vtable slot 0x74): thiscall, index = [esp+4] (0..10 -> package via

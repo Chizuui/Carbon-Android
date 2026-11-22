@@ -985,7 +985,6 @@ void FeSwipe(const Finger& f) {
     float h = Height(), dx = f.x - f.x0, dy = f.y - f.y0;
     float along = std::max(std::fabs(dx), std::fabs(dy));
     if (along < kSwipe * h) return;
-    game::FeTakeStart();
     game::FeTakeAccept();  // a swipe accepts nothing
     int steps = std::clamp(int(along / (kSwipeStep * h) + 0.5f), 1, kMaxSwipeSteps);
     // up down left right; a list follows the finger (swipe left/up goes to the next item), but on the vinyl

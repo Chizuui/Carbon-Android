@@ -225,24 +225,6 @@ bool IsOverlayPackageName(const char* name) {
 bool Racing() {
     return mem::IsCommitted(kGameFlowState) && kernel::R32(kGameFlowState) == kGameFlowRacing;
 }
-// Custom strings for button prompts
-struct Prompt {
-    uint32_t hash;
-    const char* text;
-};
-const Prompt kPrompts[] = {
-    // Carbon-specific title screen hashes (extracted from ZZDATA Global strings chunk):
-    {0x8CD6BD6D, "Tap anywhere to begin"}, // Press START
-    {0x8CD63CB8, "Tap anywhere to begin"}, // Press START button
-    {0x0BE9C967, "Tap anywhere to begin"}, // Press START to begin
-    {0x1BAD0AEA, "Tap anywhere to begin"}, // Press START
-    // Fallback Most Wanted hashes:
-    {0x9B580A55, "Tap anywhere to begin"},
-    {0xDC64C04C, "Tap anywhere to begin"},
-    {0xD18D4C4C, "Tap anywhere to begin"},
-    {0x9D8F2513, "Tap or press"},
-};
-
 uint32_t GuestText(const char* text) {
     static std::mutex lock;
     static std::unordered_map<const char*, uint32_t> copies;
@@ -254,12 +236,6 @@ uint32_t GuestText(const char* text) {
         if (va) std::memcpy(kernel::HostPtr(va), text, n);
     }
     return va;
-}
-
-const char* OwnString(uint32_t hash) {
-    for (const Prompt& p : kPrompts)
-        if (p.hash == hash) return p.text;
-    return nullptr;
 }
 
 // FEng Touch & Mouse Hook for Carbon:
@@ -280,8 +256,7 @@ bool g_reported_down = false;
 std::atomic<uint32_t> g_presses{0};
 constexpr int kMouseFrames = 30;
 std::atomic<int> g_mouse_frames{0};
-std::atomic<uint32_t> g_accept_package{0}, g_accept_button{0}, g_start_package{0};
-std::atomic<bool> g_tap_anywhere{false}, g_press_start{false}, g_accept_start{false};
+std::atomic<uint32_t> g_accept_package{0}, g_accept_button{0};
 constexpr uint32_t kAnywhere = 1;
 
 uint32_t FEngine() {
@@ -326,8 +301,6 @@ void FeFrame() {
     if (!fe) {
         g_package = 0;
         g_current_button = 0;
-        g_press_start = false;
-        g_tap_anywhere = false;
         g_menu = true;
         return;
     }
@@ -342,7 +315,6 @@ void FeFrame() {
     }
     bool racing = Racing();
     uint32_t pkg = 0;
-    bool press_start = false;
     int n = 0;
     for (uint32_t p = mem::IsCommitted(fe + kFirstPackage + 3) ? kernel::R32(fe + kFirstPackage) : 0;
          p && n < kMaxPackages && mem::IsCommitted(p + kCurrentButton + 3);
@@ -353,7 +325,6 @@ void FeFrame() {
         if (!pkg) pkg = p;
         if (name && StartsWithNoCase(name, "FePressStart")) {
             pkg = p;
-            press_start = true;
         }
     }
     bool menu = !racing || pkg != 0;
@@ -373,8 +344,6 @@ void FeFrame() {
     }
     g_package = menu ? pkg : 0;
     g_current_button = (menu && pkg && mem::IsCommitted(pkg + kCurrentButton + 3)) ? kernel::R32(pkg + kCurrentButton) : 0;
-    g_press_start = menu && press_start;
-    g_tap_anywhere = menu && pkg != 0 && !press_start;
     g_menu = menu;
 }
 
@@ -417,20 +386,7 @@ void FeTouch(bool down, float u, float v) {
     float wide = 480.0f * Aspect();
     g_x = int32_t((u - 0.5f) * wide);
     g_y = int32_t((v - 0.5f) * 480.0f);
-    if (down && !g_down) {
-        g_presses++;
-        uint32_t p = g_package.load();
-        if (g_press_start) {
-            g_start_package = p;
-            g_accept_start = true;
-            g_accept_package = 0;
-            g_accept_button = 0;
-        } else if (g_tap_anywhere && p) {
-            uint32_t btn = g_current_button.load();
-            g_accept_package = p;
-            g_accept_button = btn ? btn : kAnywhere;
-        }
-    }
+    if (down && !g_down) g_presses++;
     g_down = down;
     g_mouse_frames = kMouseFrames;
 }
@@ -441,13 +397,6 @@ bool FeTakeAccept() {
     if (!kernel::G<uint8_t>(p + kInputEnabled)) return false;
     uint32_t cur = g_current_button.load();
     return button == kAnywhere ? (cur == 0) : (cur == button);
-}
-
-bool FeTakeStart() {
-    uint32_t p = g_start_package.exchange(0);
-    bool start = g_accept_start.exchange(false);
-    if (!start || !p || p != g_package || !g_press_start) return false;
-    return mem::IsCommitted(p + kInputEnabled) && kernel::G<uint8_t>(p + kInputEnabled) != 0;
 }
 
 bool LanguageAvailable(const std::string& code) { return code == "int" || code == "ind"; }
@@ -475,24 +424,6 @@ static void CleanUnlocalized(X86Context& ctx) {
 // 1. sub_0011F9A0 (low-level binary search, hash in edx)
 X86_EXTERN_FUNC(__imp__sub_0011F9A0);
 X86_FUNC(sub_0011F9A0) {
-    uint32_t hash = ctx.edx;
-    // the title screen's string is edited in place: a string of ours handed back crashed the title screen
-    if (hash == 0x186AAECC) {
-        __imp__sub_0011F9A0(ctx, base);
-        if (ctx.eax && mem::IsCommitted(ctx.eax)) {
-            char* s = (char*)kernel::HostPtr(ctx.eax);
-            static const char kText[] = "TAP to begin"; // only letters the original has: the title font's glyph set is cut down
-            if (std::strlen(s) >= sizeof(kText) - 1) std::memcpy(s, kText, sizeof(kText));
-        }
-        return;
-    }
-    if (const char* text = game::OwnString(hash)) {
-        if (uint32_t va = game::GuestText(text)) {
-            ctx.eax = va;
-            ctx.esp += 4;
-            return;
-        }
-    }
     __imp__sub_0011F9A0(ctx, base);
     CleanUnlocalized(ctx);
 }
@@ -500,14 +431,6 @@ X86_FUNC(sub_0011F9A0) {
 // 2. sub_0011FAB0 (high-level SearchForString, hash on stack [esp+4])
 X86_EXTERN_FUNC(__imp__sub_0011FAB0);
 X86_FUNC(sub_0011FAB0) {
-    uint32_t hash = kernel::R32(ctx.esp + 4);
-    if (const char* text = game::OwnString(hash)) {
-        if (uint32_t va = game::GuestText(text)) {
-            ctx.eax = va;
-            ctx.esp += 4;
-            return;
-        }
-    }
     __imp__sub_0011FAB0(ctx, base);
     CleanUnlocalized(ctx);
 }

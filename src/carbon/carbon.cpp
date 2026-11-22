@@ -685,6 +685,32 @@ X86_FUNC(sub_00242FD0) {
     __imp__sub_00242FD0(ctx, base);
 }
 
+// Guard the car-name classifier (0x94F30): it takes `this` in ecx and reads [ecx+0x08] via
+// sub_000887E0, but its callers pass it the result of the car_db lookup (sub_0007B720),
+// which returns NULL when the handle is not in career+0x234 — and three of them
+// (0x272E90, 0x27D970, 0x2DFE30) do not check it. That is the garage SIGSEGV
+// (addr 0x100000008, pc sub_000887E0+0x3c): the game resolves a car whose handle is not
+// in the db while idle in the garage. Returning 0 is what the game itself does for a
+// NULL object here (sub_000960D0 returns 0 instead of calling 94F30), and the callers
+// then feed the hash to SearchForString as usual. 94F30 is a pure thiscall with no
+// stack args and a plain `ret`, so the early return only pops the return address.
+X86_EXTERN_FUNC(__imp__sub_00094F30);
+X86_FUNC(sub_00094F30) {
+    if (!ctx.ecx) {
+        uint32_t flow = game::IsCommittedRange(game::kGameFlowState, 4) ? kernel::R32(game::kGameFlowState) : 0xFFFFFFFFu;
+        uint32_t ret = game::IsCommittedRange(ctx.esp, 4) ? kernel::R32(ctx.esp) : 0;
+        static uint32_t last_ret = 0;
+        if (ret != last_ret) {
+            LOGR("cars: 94F30 guard: null car object, returning 0 (flow=%u, called from %08X)", flow, ret);
+            last_ret = ret;
+        }
+        ctx.eax = 0;
+        ctx.esp += 4;  // pop the return address, like the original's ret
+        return;
+    }
+    __imp__sub_00094F30(ctx, base);
+}
+
 // Buy-car unlock (0xA19E0, FeVar op 0x1B59): when a car is bought the game clones the template slot
 // into car_db (sub_0009CD00, flags low16 = 0x0004) and stores the new handle at career+0x26230, but it
 // never writes the car's id into the unlock table [0x45680C]. The car-select listing filters on that

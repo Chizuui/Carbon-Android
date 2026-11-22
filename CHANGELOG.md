@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Carbon Mods Loader sudah ada — aplikasi terpisah dengan ikon sendiri: cari mobil di NFSAddons, pasang dari file (ZIP/7z/RAR), mobilnya masuk ke car select dan garasi; paket tekstur juga bisa dipasang, dan tiap mod bisa dihapus dari daftarnya.
 - Mods folder sekarang dibaca — file di `Carbon/mods` yang namanya sama dengan file di disc dibaca duluan, jadi mod pengganti file bisa jalan; foldernya dicek pas game mulai dan dicatat di log.
 - Mobil tidak putih lagi pas PANTULAN MOBIL di OFF — pas OFF, muka cube refleksi tidak pernah digambar, jadi port tidak kenal lagi cube-nya dari target yang ada dan mobil jatuh ke langit siang bawaan game; sekarang port mengenali cube-nya dari objek teksturnya sendiri (live cube dan STATICENVMAP), jadi mobil dapat refleksi abu-abu gelap.
 - Mobil tidak putih lagi pas PANTULAN MOBIL bukan FULL — kalau cube refleksi belum sempat digambar (habis loading, atau rate di bawah FULL), mobil sekarang dapat refleksi abu-abu gelap, bukan cube langit siang bawaan game; plus cube dipaksa digambar di awal balapan biar langsung normal.

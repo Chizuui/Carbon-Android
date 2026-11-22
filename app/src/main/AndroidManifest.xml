@@ -18,7 +18,7 @@
     <!-- the game's files in a folder of their own on the shared storage, when the player allows it -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <!-- Android 10, which has no all files access: the MostWanted folder made and an imported image copied into it -->
+    <!-- Android 10, which has no all files access: the Carbon folder made and an imported image copied into it -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
 
     <application
@@ -27,6 +27,7 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:hardwareAccelerated="true"
+        android:largeHeap="true"
         android:extractNativeLibs="false"
         android:requestLegacyExternalStorage="true"
         android:appCategory="game"
@@ -44,6 +45,47 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- add-on cars, an icon of its own; its process keeps the game's libraries out and can stop the game's -->
+        <activity
+            android:name=".ModsActivity"
+            android:label="@string/mods_title"
+            android:icon="@mipmap/ic_mods"
+            android:roundIcon="@mipmap/ic_mods"
+            android:exported="true"
+            android:process=":mods"
+            android:taskAffinity="com.racas.carbon.mods"
+            android:launchMode="singleTop"
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- a car's archive opened or shared from the browser's downloads or a file manager -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/x-rar-compressed" />
+                <data android:mimeType="application/vnd.rar" />
+                <data android:mimeType="application/rar" />
+            </intent-filter>
+            <!-- a share has its file in EXTRA_STREAM, no URI: a filter naming a scheme would not match it -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/x-rar-compressed" />
+                <data android:mimeType="application/vnd.rar" />
+                <data android:mimeType="application/rar" />
             </intent-filter>
         </activity>
     </application>

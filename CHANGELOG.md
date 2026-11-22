@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Baris Android Settings sekarang mengubah pengaturan port — geser kiri/kanan mengubah nilai (resolusi, brightness, dsb.) dan langsung tersimpan ke carbon.toml; game tidak lagi menulis ke profil untuk baris-baris ini.
 - Tab Android Settings sekarang menampilkan baris-baris pengaturan grafis (resolusi render, aspect ratio, brightness, vertical sync, bloom, pantulan mobil) — label barisnya masih label AUDIO dari game, karena teks baris dibaca dari file menu game; nilai yang diubah sudah pengaturan port.
 - Tab Android Settings ditambahkan ke menu OPTIONS game (indeks 7, setelah CONTROLS) — label tabnya masih menunggu hasil tes, karena teks tab dibaca dari file menu game.
 - Build instrumentasi sementara buat selidiki menu OPTIONS game — log saja, tidak mengubah perilaku: fungsi-fungsi menu OPTIONS (pembuatan tab, pilih layar, notifikasi layar) dicatat ke log dengan prefix "opt: " biar ketahuan jalur kategori dan titik pembuatan barisnya; dihapus lagi sebelum implementasi tab Android beneran.

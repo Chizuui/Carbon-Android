@@ -15,6 +15,7 @@ namespace dispatch {
 uint32_t HostThunk(X86Func* fn);
 }
 
+#include "app/app.h"
 #include "common/fe_mouse.h"
 #include "common/game_font.h"
 #include "common/hud_layout.h"
@@ -1260,16 +1261,53 @@ X86_FUNC(sub_00156B00) {
     __imp__sub_00156B00(ctx, base);
 }
 
-// 0x154870 (move selection, called from 0x156B00's Up/Down path): thiscall, message hash =
-// [esp+4], args = [esp+8]/[esp+0xC]/[esp+0x10]. Direct view of selection movement.
+// 0x154870 (move selection, called from 0x156B00's Up/Down path and 0x156CA6's Left/Right
+// path): thiscall, message hash = [esp+4], args = [esp+8]/[esp+0xC]/[esp+0x10]. Direct view
+// of selection movement. ANDROID screen: Left/Right steps the port's setting for the
+// current row (the factory rows are AUDIO templates, so the game must never apply their
+// value to the profile) — the original is skipped (ret 0x10: return address + 4 args).
 X86_EXTERN_FUNC(__imp__sub_00154870);
 X86_FUNC(sub_00154870) {
     uint32_t self = ctx.ecx;
     uint32_t msg = kernel::R32(ctx.esp + 4);
+    if (g_opt_android && (msg == 0x9120409Eu || msg == 0xB5971BF1u)) {
+        uint32_t row_idx = IsCommittedRange(self + 0xD8, 4) ? kernel::R32(self + 0xD8) : 0xFFFFFFFFu;
+        int step = (msg == 0x9120409Eu) ? -1 : 1;
+        if (row_idx < g_android_rows.size()) {
+            const app::rows::Row& row = g_android_rows[row_idx].row;
+            std::string value = app::rows::Value(row, step);
+            app::Save();
+            LOGR("opt: android step row=%u label=%s step=%d value=%s", row_idx, row.label, step,
+                 value.c_str());
+        } else {
+            LOGR("opt: android step row=%u OUT OF RANGE (n=%u) step=%d", row_idx,
+                 (unsigned)g_android_rows.size(), step);
+        }
+        ctx.esp += 20;  // skip the original: ret 0x10
+        return;
+    }
     LOGR("opt: 154870 movesel this=%08X msg=%08X(%s) a1=%08X a2=%08X a3=%08X pkg=%s", self, msg,
          OptMsgName(msg), kernel::R32(ctx.esp + 8), kernel::R32(ctx.esp + 0xC),
          kernel::R32(ctx.esp + 0x10), OptPkg());
     __imp__sub_00154870(ctx, base);
+}
+
+// 0x153470 (apply after Left/Right, called from 0x156CA6 and refresh paths): thiscall, no
+// stack args, plain ret. It re-reads the current row's value from the game profile and
+// refreshes the screen. On the ANDROID screen the rows are not profile-bound, so the game
+// must not sync from the profile — skip it there.
+X86_EXTERN_FUNC(__imp__sub_00153470);
+X86_FUNC(sub_00153470) {
+    if (g_opt_android) {
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            LOGR("opt: 153470 apply skipped (android)");
+        }
+        ctx.esp += 4;  // plain ret: only the return address
+        return;
+    }
+    __imp__sub_00153470(ctx, base);
 }
 
 }  // namespace game

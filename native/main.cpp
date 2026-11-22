@@ -33,6 +33,7 @@
 #include "app/app.h"
 #include "build_info.h"
 #include "common/aspect.h"
+#include "common/texture_packs.h"
 #include "common/translations.h"
 #include "core/input.h"
 #include "core/log.h"
@@ -549,6 +550,7 @@ int main(int, char**) {
     if (std::filesystem::is_directory(mods, mods_ec)) {
         kernel::SetDiscOverlay(mods.string());
         LOGR("app: mods in %s", mods.c_str());
+        texpacks::Load((mods / "textures").string());
     }
     if (!kernel::Boot(std::move(game.xbe), IMAGE_XBE, game.dir.string(), (app::ExeDir() / "hdd").string())) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, Utf8(app::kGame.short_title).c_str(),

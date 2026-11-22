@@ -875,6 +875,7 @@ HLE_STDCALL(D3DDevice_Swap, 1) {
     game::WidenAspect();
     game::ApplyGraphicsSwitches();
     game::ApplyCheats();
+    game::TexturePacksFrame(ctx);
     game::CaptureFont();
     game::FeFrame();
 #if __has_include("carbon/dump.h")

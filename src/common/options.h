@@ -6,6 +6,8 @@
 #include <map>
 #include <string>
 
+struct X86Context;  // the recomp's register state, for the per-present hooks' signatures
+
 // the game's own settings, in the settings file through app::kGame.options
 namespace game {
 
@@ -70,6 +72,7 @@ void WaitWhileUnfocused();  // native/game_host.cpp: game thread, before the pre
 void WidenAspect();         // the per-game hooks: game thread, at each present
 void ApplyGraphicsSwitches();  // the per-game hooks: game thread, at each present
 void ApplyCheats();            // the per-game hooks: game thread, at each present
+void TexturePacksFrame(X86Context& ctx);  // src/game/texture_packs.cpp: game thread, at each present
 bool Racing();    // the per-game hooks, any thread: the game flow is in a race (free roam too), not loading or the front end
 
 }  // namespace game

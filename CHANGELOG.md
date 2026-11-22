@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Cheat UNLOCK ALL dihapus total — barisnya sudah tidak ada lagi di menu CHEATS, dan kodenya juga dihapus, jadi tidak ada lagi cara buat buka semua mobil/part/balapan sekaligus; mobil yang dibeli tetap muncul seperti biasa karena fix beli mobil kemarin (yang nandain mobil sebagai dimiliki) masih jalan.
 - Build diagnostik buat bug map keluar radar — build ini nyatetin tiap gambar yang pakai stencil (mask lingkaran radar) biar ketahuan kenapa jalanan bisa keluar dari lingkaran; bukan fix, tapi buat nyari penyebabnya dari log.
 - Bulatan kuning (target ring) di minimap sekarang ikut gerak pas minimap dipindah — sebelumnya ring-nya ketinggalan di posisi map yang lama karena kode yang nempatin ring itu baca posisi map dari tempat yang tidak ikut kegeser; sekarang tiga fungsi minimap itu juga digeser bareng map-nya.
 - Mobil tidak putih lagi di garasi / paint shop — di luar balapan, cat mobil pakai env map ketiga yang belum dikenali port, jadi catnya ketimpa langit siang bawaan game dan jadi putih; sekarang env map itu juga dikenali dan mobil dapat refleksi abu-abu gelap kayak env map lainnya.

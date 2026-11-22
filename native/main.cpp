@@ -522,6 +522,7 @@ int main(int, char**) {
     logx::Init(LogDir().string(), app::kGame.log);
     InstallCrashHandlers(logx::Path());
     LOGR("app: log %s", logx::Path().c_str());
+    if (!logx::PrevPath().empty()) LOGR("app: previous log %s", logx::PrevPath().c_str());
     app::Load();
     if (app::kGame.init) app::kGame.init();
     app::LogSystem();

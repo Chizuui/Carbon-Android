@@ -1,5 +1,7 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Log sesi sebelumnya tidak ketimpa lagi pas buka app — log lama disimpan jadi `carbon-prev.log`, dan EXPORT LOG ikut menyalinnya ke Download, jadi jejak crash tetap bisa dikirim walau app sudah dibuka lagi.
+
 - Mobil di safe house tidak hilang lagi pas pilih car select — guard data mobil sekarang pakai patokan "dimiliki" yang sama seperti game (flag owned di database mobil), jadi mobil yang sudah dibeli tidak ketukar sama slot kosong; plus cheat MAX CASH tidak lagi nulis ke alamat yang salah kalau career belum ke-load.
 
 - Auto-update dari GitHub release — app sekarang ngecek update sendiri tiap dibuka (ada juga tombol CHECK FOR UPDATES di settings); kalau ada versi baru, muncul changelog-nya sama tombol Download, jadi nggak perlu nunggu link manual lagi.

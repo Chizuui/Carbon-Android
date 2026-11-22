@@ -17,6 +17,7 @@ namespace logx {
 static std::mutex g_mutex;
 static FILE* g_file = nullptr;
 static std::string g_path;
+static std::string g_prev_path;  // the previous session's log, kept at startup so a crash survives a relaunch
 static auto g_start = std::chrono::steady_clock::now();
 
 constexpr int kKeep = 30;
@@ -35,6 +36,17 @@ void Init(const std::string& dir, const std::string& prefix, bool append) {
     fs::create_directories(dir, ec);
     if (!kVerbose) {
         g_path = (fs::path(dir) / (prefix + ".log")).string();
+        if (!append) {
+            // keep the previous session before truncating: the crash handler appends to this file, and a
+            // tester who reopens the app to export it would otherwise find it truncated away. Best effort:
+            // no previous log on first launch, or an unwritable dir, just means there is nothing to keep
+            fs::path prev = fs::path(dir) / (prefix + "-prev.log");
+            std::error_code rec;
+            fs::remove(prev, rec);
+            rec.clear();
+            fs::rename(fs::path(g_path), prev, rec);
+            if (!rec) g_prev_path = prev.string();
+        }
         g_file = std::fopen(g_path.c_str(), append ? "a" : "w");
         return;
     }
@@ -50,6 +62,8 @@ void Init(const std::string& dir, const std::string& prefix, bool append) {
 }
 
 const std::string& Path() { return g_path; }
+
+const std::string& PrevPath() { return g_prev_path; }
 
 void Write(Level lv, const char* fmt, ...) {
     if (!kVerbose && lv < Level::Error) return;

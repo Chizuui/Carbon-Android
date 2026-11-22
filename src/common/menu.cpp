@@ -73,7 +73,9 @@ std::atomic<bool> g_open{false};
 // EXPORT LOG: the current run's log, copied where the player can send it. The log already lives in the shared
 // logs folder, but a tester has to know which of its files is this run's; the export is one clearly named copy
 // in Download, where a file manager shows it first. If Download is not writable (no all-files access yet), the
-// copy lands beside the log itself instead. The row shows EXPORT, then SAVED or FAILED; the full path is in the log
+// copy lands beside the log itself instead. The previous session's log, kept at startup so a crash survives a
+// relaunch, goes along with it under its own name when there is one. The row shows EXPORT, then SAVED or
+// FAILED; the full paths are in the log
 std::string g_export_log_status = "EXPORT";
 
 void ExportLog() {
@@ -87,28 +89,42 @@ void ExportLog() {
     std::time_t t = std::time(nullptr);
     std::tm tm{};
     localtime_r(&t, &tm);
-    char name[64];
-    std::snprintf(name, sizeof(name), "%s-log-%04d%02d%02d-%02d%02d%02d.log", kGame.log, tm.tm_year + 1900,
-                  tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
-    std::error_code ec;
-    // the log sits in <shared>/logs, so its parent's parent's parent is the storage root, and Download is beside it
-    std::filesystem::path download = src.parent_path().parent_path().parent_path() / "Download" / name;
-    std::filesystem::create_directories(download.parent_path(), ec);
-    ec.clear();
-    std::filesystem::copy_file(src, download, ec);
-    std::filesystem::path dst = download;
-    if (ec) {
+    // one copy, in Download when writable, else beside the log itself; empty when neither works
+    auto copy = [&](const std::filesystem::path& from, const std::string& stem) {
+        char name[64];
+        std::snprintf(name, sizeof(name), "%s-%04d%02d%02d-%02d%02d%02d.log", stem.c_str(), tm.tm_year + 1900,
+                      tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+        std::error_code ec;
+        // the log sits in <shared>/logs, so its parent's parent's parent is the storage root, and Download
+        // is beside it
+        std::filesystem::path download = from.parent_path().parent_path().parent_path() / "Download" / name;
+        std::filesystem::create_directories(download.parent_path(), ec);
         ec.clear();
-        dst = src.parent_path() / name;
-        std::filesystem::copy_file(src, dst, ec);
-    }
-    if (ec) {
+        std::filesystem::copy_file(from, download, ec);
+        if (!ec) return download;
+        ec.clear();
+        std::filesystem::path dst = from.parent_path() / name;
+        std::filesystem::copy_file(from, dst, ec);
+        if (ec) return std::filesystem::path{};
+        return dst;
+    };
+    std::filesystem::path dst = copy(src, std::string(kGame.log) + "-log");
+    if (dst.empty()) {
         g_export_log_status = "FAILED";
         LOGE("export log: cannot copy %s", src.string().c_str());
         return;
     }
     g_export_log_status = "SAVED";
     LOGR("export log: %s -> %s", src.string().c_str(), dst.string().c_str());
+    std::string prev = logx::PrevPath();
+    if (!prev.empty()) {
+        std::filesystem::path pdst = copy(std::filesystem::path(prev), std::string(kGame.log) + "-prev-log");
+        if (pdst.empty()) {
+            LOGE("export log: cannot copy %s", prev.c_str());
+        } else {
+            LOGR("export log: %s -> %s", prev.c_str(), pdst.string().c_str());
+        }
+    }
 }
 
 // near-black warm panel, gold on dark red kept from the old panel, red only for the active nav and selections

@@ -360,6 +360,15 @@ bool FeMenuShown() {
     return g_menu.load();
 }
 
+// The vinyl transform screen (FeVinylTransform.fng) is the active package: the screen reads the left
+// stick to move/scale/rotate the vinyl, not the mouse, so touch drives the stick while it is open.
+bool FeVinylTransformShown() {
+    uint32_t p = g_package.load();
+    if (!p) return false;
+    const char* name = PackageName(p);
+    return name && StartsWithNoCase(name, "FeVinylTransform");
+}
+
 bool FeMouseDown() { return g_reported_down; }
 bool FeFinger(float& x, float& y) {
     x = float(g_x.load());

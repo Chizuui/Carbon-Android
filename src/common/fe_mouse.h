@@ -6,6 +6,7 @@ namespace game {
 
 void FeFrame();             // game thread, at each present
 bool FeMenuShown();         // any thread: a menu that takes the pointer is up
+bool FeVinylTransformShown();  // any thread: the vinyl transform screen (FeVinylTransform) is the active package
 bool FeMouseDown();         // game thread: FEng's mouse button down this update
 bool FeFinger(float& x, float& y);  // any thread: the finger in FEng's screen, true while it is down
 // the menu's button prompts lately, for A, B, X, Y and the triggers (L and R, the showcase's zoom): shown, and its

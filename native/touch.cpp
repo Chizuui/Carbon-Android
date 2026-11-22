@@ -489,6 +489,7 @@ std::mutex g_lock;
 std::vector<Finger> g_fingers;
 bool g_pressed[kButtonCount] = {};
 float g_stick_x = 0, g_stick_y = 0;  // -1 to 1, y up
+float g_vinyl_x = 0, g_vinyl_y = 0;  // the vinyl screen's drag, as a left-stick deflection, -1 to 1, y up
 float g_rstick_x = 0, g_rstick_y = 0;  // the right stick, a drag on the right of the screen
 std::atomic<uint64_t> g_touch_ms{0};
 std::atomic<uint64_t> g_back_until{0};  // the back key's tap of Start or B lasts until then
@@ -987,7 +988,11 @@ void FeSwipe(const Finger& f) {
     game::FeTakeStart();
     game::FeTakeAccept();  // a swipe accepts nothing
     int steps = std::clamp(int(along / (kSwipeStep * h) + 0.5f), 1, kMaxSwipeSteps);
-    int dpad = std::fabs(dx) > std::fabs(dy) ? (dx < 0 ? 3 : 2) : (dy < 0 ? 1 : 0);  // up down left right
+    // up down left right; a list follows the finger (swipe left/up goes to the next item), but on the vinyl
+    // canvas the swipe moves the vinyl with the finger, so it is not inverted there
+    int dpad = game::FeVinylTransformShown()
+                   ? (std::fabs(dx) > std::fabs(dy) ? (dx < 0 ? 2 : 3) : (dy < 0 ? 0 : 1))
+                   : (std::fabs(dx) > std::fabs(dy) ? (dx < 0 ? 3 : 2) : (dy < 0 ? 1 : 0));
     FeQueuePresses(kBit + dpad, steps);
 }
 
@@ -1255,7 +1260,23 @@ void FingerMove(SDL_FingerID id, float x, float y) {
         // a menu prompting the right stick (the showcase turning the car, the map's cursor): a drag past a tap's reach
         // is the stick from where it came down
         if (f.role == Role::FeTap && std::hypot(f.x - f.x0, f.y - f.y0) >= kSwipe * Height()) f.role = Role::Look;
-        if (f.role == Role::FeMouse) FePointer(f, true);
+        if (f.role == Role::FeMouse) {
+            FePointer(f, true);
+            if (game::FeVinylTransformShown()) {
+                // the vinyl screen reads the left stick, not the mouse: drive it from the drag, as a
+                // virtual stick anchored where the finger came down (StickOf's model, y up, a quarter
+                // screen of drag for full deflection)
+                float r = 0.25f * Height();
+                float dx = (f.x - f.x0) / r, dy = (f.y - f.y0) / r;
+                float len = std::sqrt(dx * dx + dy * dy);
+                if (len > 1) {
+                    dx /= len;
+                    dy /= len;
+                }
+                g_vinyl_x = dx;
+                g_vinyl_y = -dy;
+            }
+        }
         if (f.role == Role::Look) StickOf(f, g_rstick_x, g_rstick_y, kRStick);
         if (f.role == Role::Wheel) TurnWheel(f);
         break;
@@ -1275,6 +1296,14 @@ void FingerUp(SDL_FingerID id) {
             FeSwipe(f);
         }
     std::erase_if(g_fingers, [id](const Finger& f) { return f.id == id; });
+    // a vinyl drag ended: let go of the stick it was driving
+    bool vinyl = false;
+    for (const Finger& f : g_fingers)
+        if (f.role == Role::FeMouse) vinyl = true;
+    if (!vinyl) {
+        g_vinyl_x = 0;
+        g_vinyl_y = 0;
+    }
     Recount();
 }
 
@@ -1422,16 +1451,25 @@ void Apply(int port, input::Pad& pad) {
     if (g_steering == Steering::Wheel) steer += g_wheel_turn / kWheelLock;
     if (g_steering == Steering::Tilt && !FeMenu() && !app::MenuOpen()) steer += gyro::Steer();
     float sx = std::clamp(g_stick_x + steer, -1.0f, 1.0f);
+    float sy = g_stick_y;
     if (FeMenu()) {
         // In FEng menus / Autosculpt customization, if D-Pad Left/Right is pressed, also reflect in pad.lx
         // so analog sliders (Zone 1, Zone 2) adjust seamlessly along with D-Pad
         if (g_pressed[13]) sx = -1.0f;       // dpad_left
         else if (g_pressed[14]) sx = 1.0f;  // dpad_right
+        // ... and Up/Down in pad.ly, so a stick-driven menu (the vinyl editor) moves vertically too
+        if (g_pressed[11]) sy = 1.0f;        // dpad_up (y up)
+        else if (g_pressed[12]) sy = -1.0f;  // dpad_down
+        // the vinyl screen reads the left stick: a drag on the vinyl drives it, and wins over the dpad
+        if (game::FeVinylTransformShown() && (g_vinyl_x || g_vinyl_y)) {
+            sx = g_vinyl_x;
+            sy = g_vinyl_y;
+        }
     }
-    if (sx || g_stick_y) {
+    if (sx || sy) {
         used = true;
         pad.lx = int16_t(sx * 32767.0f);
-        pad.ly = int16_t(std::clamp(g_stick_y, -1.0f, 1.0f) * 32767.0f);
+        pad.ly = int16_t(std::clamp(sy, -1.0f, 1.0f) * 32767.0f);
     }
     if (g_rstick_x || g_rstick_y) {
         used = true;

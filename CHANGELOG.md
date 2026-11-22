@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Vinyl di editor akhirnya bisa digeser — layarnya ternyata baca left stick, bukan sentuhan, jadi drag di vinyl sekarang diteruskan ke stick (D-pad atas/bawah juga gerak vertikal), dan swipe di layar itu tidak terbalik lagi.
 - Mobil yang baru dibeli tidak hilang lagi dari car select pas cheat UNLOCK ALL mati — pas beli, game cuma masukin mobil ke database tapi tidak nandain mobil itu sebagai "dimiliki" di tabel unlock, jadi daftar mobil menyembunyikannya; sekarang tiap mobil dibeli langsung ditandai sebagai dimiliki, jadi tetap kelihatan walau cheat mati.
 - Bersih-bersih sisa Most Wanted — label game sekarang "Carbon" (judul log tidak lagi dobel "Need for Speed: NFS Carbon"), kredit Java diperbaiki jadi "Port by Chizui" + "Base by Rangga Casper" dengan link Donate/GitHub/YouTube yang benar, caption tombol BLACK/WHITE jadi "CHANGE CAMERA"/"REAR VIEW", dan alamat-alamat MW yang basi di komen sudah dibersihkan; file XBE Most Wanted yang tidak terpakai (`ci/default.xbe.enc`) dihapus.
 - EXPORT LOG sekarang selalu mendarat di Download — kalau log sedang di folder fallback (folder aplikasi sendiri), jalurnya diambil dari folder Carbon, bukan lagi nyasar ke dalam Android/data.

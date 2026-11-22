@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "common/aspect.h"
 #include "core/log.h"
@@ -17,6 +18,7 @@ uint32_t HostThunk(X86Func* fn);
 #include "common/fe_mouse.h"
 #include "common/game_font.h"
 #include "common/hud_layout.h"
+#include "common/menu.h"
 #include "common/options.h"
 
 namespace game {
@@ -1094,6 +1096,47 @@ uint32_t CallGameThis1(X86Context& ctx, uint8_t* base, X86Fn fn, uint32_t self, 
     return ret;
 }
 
+// The ANDROID rows: the port's graphics rows (app::rows page 0), in the order the factory
+// creates them (screen row index = position here). The factory type is the AUDIO type the
+// game uses for that slot; its template is irrelevant because the value is intercepted.
+struct AndroidRow {
+    app::rows::Row row;
+    uint32_t type;
+};
+std::vector<AndroidRow> g_android_rows;
+bool g_opt_android = false;  // the ANDROID screen (setup mode 7) is the current OPTIONS screen
+
+constexpr struct {
+    const char* label;
+    uint32_t type;
+} kAndroidRowDefs[] = {
+    {"RENDER RESOLUTION", 0x1395},
+    {"ASPECT RATIO", 0x1399},
+    {"BRIGHTNESS", 0x138F},
+    {"VERTICAL SYNC", 0x1391},
+    {"BLOOM", 0x1393},
+    {"CAR REFLECTIONS", 0x13C0},
+};
+
+// The port rows for the ANDROID screen, one factory row each, in kAndroidRowDefs order.
+// A missing label is skipped in both lists, so screen row index and g_android_rows stay aligned.
+void BuildAndroidRows() {
+    g_android_rows.clear();
+    size_t count = 0;
+    const app::rows::Row* page = app::rows::Page(0, &count);
+    if (!page) return;
+    for (const auto& def : kAndroidRowDefs) {
+        for (size_t i = 0; i < count; i++) {
+            if (page[i].kind == app::rows::Kind::Value && std::strcmp(page[i].label, def.label) == 0) {
+                g_android_rows.push_back({page[i], def.type});
+                break;
+            }
+        }
+    }
+}
+
+X86_EXTERN_FUNC(__imp__sub_0014E7A0);
+
 // 0x154CF0 (Setup, vtable slot 0xFC): thiscall, no stack args. Switches on [this+4] (mode);
 // one case creates the tab icons via 0x1475C0 with indices 0,3,4,5,(8,0x0A,0x0B). Called on
 // mode changes / menu open, so every call is logged.
@@ -1104,6 +1147,30 @@ X86_FUNC(sub_00154CF0) {
     uint32_t f8 = IsCommittedRange(self + 8, 4) ? kernel::R32(self + 8) : 0xFFFFFFFFu;
     LOGR("opt: 154CF0 setup this=%08X mode=%u [this+8]=%u pkg=%s", self, mode, f8, OptPkg());
     __imp__sub_00154CF0(ctx, base);
+    // ANDROID screen: setup mode 7 is an empty no-op case, so create its rows here with the
+    // game's factory. No game category is bound (no 0x138FA0): the rows are not profile-bound.
+    g_opt_android = (mode == 7);
+    if (mode == 7) {
+        BuildAndroidRows();
+        uint32_t factory_this = IsCommittedRange(0x46A8B4u, 4) ? kernel::R32(0x46A8B4u) : 0;
+        if (!factory_this || g_android_rows.empty()) {
+            LOGR("opt: android rows NOT created (factory_this=%08X n=%u)", factory_this,
+                 (unsigned)g_android_rows.size());
+            return;
+        }
+        uint32_t counter_before =
+            IsCommittedRange(factory_this + 0x160, 4) ? kernel::R32(factory_this + 0x160) : 0xFFFFFFFFu;
+        for (size_t i = 0; i < g_android_rows.size(); i++) {
+            uint32_t ret =
+                CallGameThis1(ctx, base, __imp__sub_0014E7A0, factory_this, g_android_rows[i].type);
+            LOGR("opt: android row %u type=%04X label=%s ret=%08X", (unsigned)i, g_android_rows[i].type,
+                 g_android_rows[i].row.label, ret);
+        }
+        uint32_t counter_after =
+            IsCommittedRange(factory_this + 0x160, 4) ? kernel::R32(factory_this + 0x160) : 0xFFFFFFFFu;
+        LOGR("opt: android rows created n=%u counter %u->%u", (unsigned)g_android_rows.size(),
+             counter_before, counter_after);
+    }
 }
 
 // 0x1475C0 (tab/icon creation): thiscall, index = [esp+4] (0..10, jump table -> texture hash).

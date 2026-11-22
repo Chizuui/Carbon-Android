@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Tab Android Settings sekarang menampilkan baris-baris pengaturan grafis (resolusi render, aspect ratio, brightness, vertical sync, bloom, pantulan mobil) — label barisnya masih label AUDIO dari game, karena teks baris dibaca dari file menu game; nilai yang diubah sudah pengaturan port.
 - Tab Android Settings ditambahkan ke menu OPTIONS game (indeks 7, setelah CONTROLS) — label tabnya masih menunggu hasil tes, karena teks tab dibaca dari file menu game.
 - Build instrumentasi sementara buat selidiki menu OPTIONS game — log saja, tidak mengubah perilaku: fungsi-fungsi menu OPTIONS (pembuatan tab, pilih layar, notifikasi layar) dicatat ke log dengan prefix "opt: " biar ketahuan jalur kategori dan titik pembuatan barisnya; dihapus lagi sebelum implementasi tab Android beneran.
 - Mobil tidak putih lagi pas PANTULAN MOBIL di OFF — pas OFF, muka cube refleksi tidak pernah digambar, jadi port tidak kenal lagi cube-nya dari target yang ada dan mobil jatuh ke langit siang bawaan game; sekarang port mengenali cube-nya dari objek teksturnya sendiri (live cube dan STATICENVMAP), jadi mobil dapat refleksi abu-abu gelap.

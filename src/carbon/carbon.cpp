@@ -118,7 +118,9 @@ void ApplyCheats() {
     uint32_t count = IsCommittedRange(sys + 0xD8, 4) ? kernel::R32(sys + 0xD8) : 0;
     uint32_t list = (count > 0 && IsCommittedRange(sys + 0xD4, 4)) ? kernel::R32(sys + 0xD4) : 0;
     uint32_t career = IsCommittedRange(list, 4) ? kernel::R32(list) : 0;
-    if (o.cheat_cash && IsCommittedRange(career + kCashField, 4)) {
+    // No career loaded yet (career 0) must not write: career + 0x24310 is then 0x24310, which lies
+    // inside the XBE image, so the write would land on dead code bytes instead of the cash field.
+    if (o.cheat_cash && career >= 0x10000u && IsCommittedRange(career + kCashField, 4)) {
         kernel::W32(career + kCashField, 9999999);
     }
     // the byte 28 unlock tests or in (0x2C6A60 answers true at once, the thing lists' lock tests 0x8A500, ...);
@@ -635,16 +637,33 @@ static uint32_t FindCarSlotInDb(uint32_t car_db, uint32_t handle) {
     return 0;
 }
 
+// A db slot's owned flag: bit 0x80 at slot+0x0C. The game's own "is this car owned" test
+// (0xA1D90) passes mask 0x80 to the db lookup (0x9CE70), which requires [slot+0x0C] & mask.
+// The guard used to judge a slot only by the type at slot+0x08, so it could "repair" the
+// current car (FeVar 0x1B58) to a slot the game does not count as owned — and could fail to
+// recognise a car the game does own. Judge ownership the way the game does.
+constexpr uint32_t kCarOwnedFlag = 0x80u;
+
 static uint32_t PickFallbackCarHandle(uint32_t car_db, uint32_t h1b60) {
     if (!game::IsCommittedRange(car_db, 0xC8u * 0x14u)) return 0;
     if (h1b60 != 0 && h1b60 != 0xFFFFFFFFu) {
         uint32_t s = FindCarSlotInDb(car_db, h1b60);
-        if (s && IsKnownCarType(kernel::R32(s + 8u))) return h1b60;
+        if (s && IsKnownCarType(kernel::R32(s + 8u)) && (kernel::R32(s + 0x0Cu) & kCarOwnedFlag) != 0) return h1b60;
     }
-    for (uint32_t i = 0; i < 0xC8u; i++) {
-        uint32_t slot = car_db + i * 0x14u;
-        uint32_t h = kernel::R32(slot);
-        if (h != 0xFFFFFFFFu && IsKnownCarType(kernel::R32(slot + 8u))) return h;
+    // Prefer a car the game itself counts as owned with a known type, so the repair never
+    // switches the player to a placeholder slot the game does not own; fall back to a known
+    // type, then to an owned slot. Never a placeholder handle.
+    for (int pass = 0; pass < 3; pass++) {
+        for (uint32_t i = 0; i < 0xC8u; i++) {
+            uint32_t slot = car_db + i * 0x14u;
+            uint32_t h = kernel::R32(slot);
+            if (h == 0 || h == 0xFFFFFFFFu) continue;
+            bool owned = (kernel::R32(slot + 0x0Cu) & kCarOwnedFlag) != 0;
+            bool known = IsKnownCarType(kernel::R32(slot + 8u));
+            if (pass == 0 && owned && known) return h;
+            if (pass == 1 && known) return h;
+            if (pass == 2 && owned) return h;
+        }
     }
     return 0;
 }
@@ -662,7 +681,9 @@ X86_FUNC(sub_00242FD0) {
         for (uint32_t idx = 0; idx < max_idx; idx++) {
             uint32_t h = QueryFeVar(ctx, base, 0x1B58u, idx, 0xFFFFFFFFu);
             uint32_t slot = FindCarSlotInDb(car_db, h);
-            if (slot && IsKnownCarType(kernel::R32(slot + 8u))) continue;
+            // Leave the current car alone when the game already counts it as owned
+            // (owned flag set), even if its type is not in the known-type list.
+            if (slot && ((kernel::R32(slot + 0x0Cu) & kCarOwnedFlag) != 0 || IsKnownCarType(kernel::R32(slot + 8u)))) continue;
             uint32_t fb = PickFallbackCarHandle(car_db, h1b60);
             LOGR("career: repair 1b58[%u]=%08X (wing=%08X 1b60=%08X) -> %08X", idx, h, wing, h1b60, fb);
             if (fb) {
@@ -670,8 +691,9 @@ X86_FUNC(sub_00242FD0) {
                 uint32_t after = QueryFeVar(ctx, base, 0x1B58u, idx, 0xFFFFFFFFu);
                 if (after != fb) LOGR("career: SetFeVar 1b58[%u] -> %08X (expected %08X)", idx, after, fb);
             } else {
-                LOGR("career: car_db empty [0]=%08X/%08X [1]=%08X/%08X", kernel::R32(car_db),
-                     kernel::R32(car_db + 8u), kernel::R32(car_db + 0x14u), kernel::R32(car_db + 0x1Cu));
+                LOGR("career: car_db empty [0]=%08X/%08X/%08X [1]=%08X/%08X/%08X", kernel::R32(car_db),
+                     kernel::R32(car_db + 8u), kernel::R32(car_db + 0x0Cu), kernel::R32(car_db + 0x14u),
+                     kernel::R32(car_db + 0x1Cu), kernel::R32(car_db + 0x14u + 0x0Cu));
                 // Diagnostic: the car handle must live somewhere in the career struct — if it is not
                 // in car_db (career+0x234) the offset may be wrong for Carbon. Scan for it once.
                 if (game::IsCommittedRange(career, 0x3000u)) {

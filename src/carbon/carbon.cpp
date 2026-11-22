@@ -51,7 +51,12 @@ void WidenAspect() {
 // - 0x3F96BA: Car Reflections (EnvMap) switch (checked at 0x1121BB)
 // - 0x3F972C: Road Reflection master switch (dword, checked at 0x111FCC before eView[4..5] loop)
 // - 0x4084FC: Car underbody shadow switch (dword, checked at 0x29A6BC before sub_0027F640)
-// - 0x46D7A0: Native SkipMovies flag (dword, checked at 0x14C246 and 0x130239)
+// - 0x46D7A0: NOT written anymore. It was assumed to be the skip-movies flag, but deeper RE could not prove it:
+//   its only readers are frontend-flow functions (sub_0014C210 gates a career-load shortcut on it, sub_00130220
+//   takes a shortcut path, sub_0023E210's test on it is dead) plus the options sync (sub_001EDA40), and none of
+//   them connects to the movie player; the FEng package hash it switches to (0xC3960EB9) could not be resolved
+//   to a name. Writing 0/1 to a game-owned option dword every present was the highest remaining crash risk,
+//   so the write was removed; the SKIP MOVIES toggle stays in the menu but does nothing until the flag is proven.
 // The world bloom switch (0x401D14, read at 0x112AF9) is left to the game: with it written 0 the scene broke
 // (map off its track, crashes). BLOOM off is native/vulkan.cpp's skip of the glow draw
 constexpr uint32_t kParticleSwitch = 0x3F96B3;
@@ -60,7 +65,6 @@ constexpr uint32_t kRoadReflectionSwitch = 0x3F972C;
 constexpr uint32_t kRoadReflectionView = 0x492F80;  // eView[4], RenderTarget pointer at +0x50 (0x492FD0)
 constexpr uint32_t kEnvMapFace0Target = 0x493750;   // EnvMap face 0 RenderTarget pointer (checked at 0x1121E4)
 constexpr uint32_t kCarShadowSwitch = 0x4084FC;
-constexpr uint32_t kSkipMovies = 0x46D7A0;
 
 // The colour data of a RenderTarget's D3DSurface ([target + 8] -> [surface + 4] physical addr).
 uint32_t TargetData(uint32_t target) {
@@ -85,9 +89,8 @@ void ApplyGraphicsSwitches() {
     if (IsCommittedRange(kCarShadowSwitch, 4)) {
         kernel::W32(kCarShadowSwitch, o.shadows ? 1u : 0u);
     }
-    if (IsCommittedRange(kSkipMovies, 4)) {
-        kernel::W32(kSkipMovies, o.skip_movies ? 1u : 0u);
-    }
+    // 0x46D7A0 is deliberately NOT written here anymore (see the comment above): its identity as the
+    // skip-movies flag is unproven, so the per-present write to that game-owned dword was removed.
     // Expose road reflection and envmap targets so Vulkan binds black when toggled OFF instead of stale frames.
     g_road_reflection = IsCommittedRange(kRoadReflectionView + 0x50, 4)
                             ? TargetData(kernel::R32(kRoadReflectionView + 0x50))
@@ -155,9 +158,11 @@ void CaptureFont() {}
 bool TakeFont(FontImage&) { return false; }
 
 // In Carbon: 0x46D280 is GameFlowState.
-// State 6 is racing/driving. Any other state is menu/loading/FMV.
+// State 6 is racing/driving. State 3 is the career/frontend state: the game itself only resolves career cars
+// when the state is 3 (sub_0027D970: cmp [0x46D280],3; jnz skip). Any other state is menu/loading/FMV.
 constexpr uint32_t kGameFlowState = 0x46D280;
 constexpr uint32_t kGameFlowRacing = 6;
+constexpr uint32_t kGameFlowCareer = 3;
 // cFEng's instance: FEngine at its first field, the packages' list at +0xE4 (their next +8, name +0xC)
 constexpr uint32_t kCFEng = 0x46A7C8;
 
@@ -637,11 +642,11 @@ static uint32_t FindCarSlotInDb(uint32_t car_db, uint32_t handle) {
     return 0;
 }
 
-// A db slot's owned flag: bit 0x80 at slot+0x0C. The game's own "is this car owned" test
-// (0xA1D90) passes mask 0x80 to the db lookup (0x9CE70), which requires [slot+0x0C] & mask.
-// The guard used to judge a slot only by the type at slot+0x08, so it could "repair" the
-// current car (FeVar 0x1B58) to a slot the game does not count as owned — and could fail to
-// recognise a car the game does own. Judge ownership the way the game does.
+// Bit 0x80 at slot+0x0C is ONE bit of a multi-bit state field, not a proven "owned" flag: sub_000A1D90,
+// once labelled "IsCarOwned", is actually a deleter — it calls the db lookup (0x9CE70) with mask 0x80, which
+// on match sets [slot]=0xFFFFFFFF — and other callers use masks 0x02/0x04. No pure ownership predicate exists
+// in the XBE. The bit is kept only as a preference hint (pass 0 below wants it set with a known type), never
+// as proof of ownership on its own.
 constexpr uint32_t kCarOwnedFlag = 0x80u;
 
 static uint32_t PickFallbackCarHandle(uint32_t car_db, uint32_t h1b60) {
@@ -650,10 +655,10 @@ static uint32_t PickFallbackCarHandle(uint32_t car_db, uint32_t h1b60) {
         uint32_t s = FindCarSlotInDb(car_db, h1b60);
         if (s && IsKnownCarType(kernel::R32(s + 8u)) && (kernel::R32(s + 0x0Cu) & kCarOwnedFlag) != 0) return h1b60;
     }
-    // Prefer a car the game itself counts as owned with a known type, so the repair never
-    // switches the player to a placeholder slot the game does not own; fall back to a known
-    // type, then to an owned slot. Never a placeholder handle.
-    for (int pass = 0; pass < 3; pass++) {
+    // Prefer a slot with the 0x80 bit set and a known type, then any known type. There used to be a third pass
+    // ("owned-only, type unknown"), but the 0x80 bit is not proven to mean "owned" (see above), so a slot is
+    // never picked on that bit alone. Never a placeholder handle.
+    for (int pass = 0; pass < 2; pass++) {
         for (uint32_t i = 0; i < 0xC8u; i++) {
             uint32_t slot = car_db + i * 0x14u;
             uint32_t h = kernel::R32(slot);
@@ -662,7 +667,6 @@ static uint32_t PickFallbackCarHandle(uint32_t car_db, uint32_t h1b60) {
             bool known = IsKnownCarType(kernel::R32(slot + 8u));
             if (pass == 0 && owned && known) return h;
             if (pass == 1 && known) return h;
-            if (pass == 2 && owned) return h;
         }
     }
     return 0;
@@ -673,7 +677,18 @@ X86_FUNC(sub_00242FD0) {
     uint32_t count = game::IsCommittedRange(sys + 0xD8u, 4) ? kernel::R32(sys + 0xD8u) : 0;
     uint32_t list = (count > 0 && game::IsCommittedRange(sys + 0xD4u, 4)) ? kernel::R32(sys + 0xD4u) : 0;
     uint32_t career = game::IsCommittedRange(list, 4) ? kernel::R32(list) : 0;
-    if (career >= 0x10000u && game::IsCommittedRange(career + 0x234u, 0xC8u * 0x14u)) {
+    // The game itself only resolves career cars when GameFlowState==3 (sub_0027D970: cmp [0x46D280],3).
+    // This guard used to run its repair on every 242FD0 call regardless of state, which is what produced the
+    // "car_db empty" log spam: it ran while no career was loaded yet and found nothing to repair. Gate the
+    // repair the same way the game does; when gated out, log once per state value and do not touch the FeVars.
+    uint32_t flow = game::IsCommittedRange(game::kGameFlowState, 4) ? kernel::R32(game::kGameFlowState) : 0xFFFFFFFFu;
+    if (flow != game::kGameFlowCareer) {
+        static uint32_t last_gated_flow = 0xFFFFFFFFu;
+        if (flow != last_gated_flow) {
+            LOGR("career: 242FD0 guard gated out (flow=%u), skipping repair", flow);
+            last_gated_flow = flow;
+        }
+    } else if (career >= 0x10000u && game::IsCommittedRange(career + 0x234u, 0xC8u * 0x14u)) {
         uint32_t car_db = career + 0x234u;
         uint32_t wing = QueryFeVar(ctx, base, 0x1771u, 0xFFFFFFFFu, 0u);
         uint32_t h1b60 = QueryFeVar(ctx, base, 0x1B60u, 0xFFFFFFFFu, 0xFFFFFFFFu);
@@ -715,7 +730,10 @@ X86_FUNC(sub_00242FD0) {
 // Guard the car-stat read (0x2881C0) against the garbage [esi+0x08] pointer left behind when the
 // career's car_db is empty (see the 0x242FD0 guard above): without a valid car the game builds a
 // car object whose +0x08 slot is 0x100000000, and [edx+0x1C] faults (SIGSEGV, addr 0x10000001c).
-// Returning 0 is safe: the caller (0x288240) stores it and copies 0 bytes.
+// Returning 0 is safe for the observed crash: the caller (0x288240) stores eax as the copy-source pointer
+// and copies [inner+0x1C] bytes from it — with inner 0 the count is 0, so nothing is copied. But the
+// caller re-dereferences [obj+0x08] itself (see the sub_00288240 hook below), so this guard alone does
+// not cover a nonzero uncommitted [obj+0x08].
 X86_EXTERN_FUNC(__imp__sub_002881C0);
 X86_FUNC(sub_002881C0) {
     uint32_t obj = ctx.ecx;
@@ -733,6 +751,37 @@ X86_FUNC(sub_002881C0) {
         return;
     }
     __imp__sub_002881C0(ctx, base);
+}
+
+// Harden the caller of the car-stat guard (0x288240): after sub_002881C0 returns, the caller re-dereferences
+// the same object itself — 0x288277: mov esi,[esi+0x08]; 0x28827E: mov ecx,[esi+0x1C] — and again at 0x2882B3
+// ([obj+0x08] -> +0x20) and 0x2882C5 ([obj+0x0C] indexed). The guard's return value is only the copy-source
+// pointer, so it cannot protect the caller: a nonzero uncommitted [obj+0x08] would still fault there after
+// the guard returned 0. Validate the object up front instead. Nulls pass through (the original null-checks
+// them); only nonzero uncommitted pointers are rejected. Returning 0 is safe: the only caller (0x2883A5)
+// ignores the return value — it stores its own args and returns.
+X86_EXTERN_FUNC(__imp__sub_00288240);
+X86_FUNC(sub_00288240) {
+    uint32_t self = ctx.ecx;
+    uint32_t obj = 0;
+    bool bad = !game::IsCommittedRange(self, 0x20u);
+    if (!bad) {
+        obj = kernel::R32(self + 0x0Cu);
+        if (obj && !game::IsCommittedRange(obj, 0x20u)) bad = true;
+    }
+    if (!bad && obj) {
+        uint32_t inner = kernel::R32(obj + 0x08u);
+        if (inner && !game::IsCommittedRange(inner, 0x24u)) bad = true;
+        uint32_t p0c = kernel::R32(obj + 0x0Cu);
+        if (!bad && p0c && !game::IsCommittedRange(p0c, 4u)) bad = true;
+    }
+    if (bad) {
+        LOGR("career: sub_00288240 bad car object (this %08X obj %08X)", self, obj);
+        ctx.eax = 0;
+        ctx.esp += 16;  // ret 0x0C: return address + 3 args
+        return;
+    }
+    __imp__sub_00288240(ctx, base);
 }
 
 // Guard the car-stat float read (0x27C6A0) — same bad-car object as 0x2881C0: when the career's

@@ -617,8 +617,12 @@ HLE_STDCALL(D3DDevice_IsFencePending, 1) {
 HLE_STDCALL(D3DDevice_IsBusy, 0) { return 0; }
 #endif
 // Visibility tests count no pixels on this backend, and the library's result would wait for a report the GPU never
-// writes. Most Wanted reads the count without looking at the result (the sun's glare, 0x0D5B6A), so it gets 0: no
-// glare, rather than one from a count left on the stack
+// writes. The old code returned 0 on the Most Wanted assumption that the game "reads the count without looking at
+// the result" — wrong for Carbon: sub_00110130 (0x1101EA) USES the count, as ratio = min(count / 32^2, 1.0),
+// then smooths the sun glare level as glare = 0.5*glare + 0.5*ratio, so a 0 count halved the glare every frame
+// until it was gone. This HLE is only ever called from that sun-glare path, so return the "sun fully visible"
+// count (1024 = 32x32): the glare comes back, at full strength whenever the game runs the glare update. No
+// occlusion is modelled — the glare can show through buildings — a real Vulkan occlusion query is out of scope.
 #if HAS_D3DDevice_BeginVisibilityTest
 HLE_STDCALL(D3DDevice_BeginVisibilityTest, 0) { return 0; }
 #endif
@@ -627,7 +631,7 @@ HLE_STDCALL(D3DDevice_EndVisibilityTest, 1) { return 0; }
 #endif
 #if HAS_D3DDevice_GetVisibilityTestResult
 HLE_STDCALL(D3DDevice_GetVisibilityTestResult, 3) {
-    if (a[1]) W32(a[1], 0);
+    if (a[1]) W32(a[1], 1024);
     if (a[2]) {
         W32(a[2], 0);
         W32(a[2] + 4, 0);

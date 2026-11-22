@@ -1,5 +1,10 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- SKIP MOVIES dimatikan dulu — setelah dicek lebih dalam, alamat yang ditulis tiap frame ternyata belum terbukti sebagai flag skip-movies (tidak ada kaitannya sama movie player), jadi tulisannya dihapus biar tidak merusak opsi game; tombolnya tetap ada tapi belum ada efeknya sampai terbukti.
+- Sun glare balik lagi — game ternyata memakai hasil tes visibilitas buat ngatur terang glare matahari, tapi port selalu jawab 0 sehingga glare mengecil sampai hilang; sekarang dijawab "matahari kelihatan penuh", jadi glare muncul lagi pas matahari di langit.
+- Guard mobil career sekarang cuma jalan pas career beneran ke-load (GameFlowState==3, sama seperti game-nya) — log "car_db empty" yang spam pas career belum ke-load hilang; plus fallback guard tidak lagi milih mobil cuma berdasarkan flag yang belum terbukti artinya.
+- Lubang crash di pemanggil guard stat mobil ditutup — fungsi pemanggilnya baca ulang pointer mobil sendiri setelah guard, jadi ditambah validasi di pemanggil itu supaya pointer rusak tidak bikin crash lagi.
+
 - Log sesi sebelumnya tidak ketimpa lagi pas buka app — log lama disimpan jadi `carbon-prev.log`, dan EXPORT LOG ikut menyalinnya ke Download, jadi jejak crash tetap bisa dikirim walau app sudah dibuka lagi.
 
 - Mobil di safe house tidak hilang lagi pas pilih car select — guard data mobil sekarang pakai patokan "dimiliki" yang sama seperti game (flag owned di database mobil), jadi mobil yang sudah dibeli tidak ketukar sama slot kosong; plus cheat MAX CASH tidak lagi nulis ke alamat yang salah kalau career belum ke-load.

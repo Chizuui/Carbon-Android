@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Converter mobil PC ke Xbox sudah ada — mobil PC Carbon (GEOMETRY.BIN/TEXTURES.BIN) diubah ke format Xbox di HP atau lewat tools/car_mod.py di PC: geometri, tekstur, data mobil, dan GLOBALB ikut ditambal supaya mobil baru masuk ke daftar mobil.
 - Carbon Mods Loader sudah ada — aplikasi terpisah dengan ikon sendiri: cari mobil di NFSAddons, pasang dari file (ZIP/7z/RAR), mobilnya masuk ke car select dan garasi; paket tekstur juga bisa dipasang, dan tiap mod bisa dihapus dari daftarnya.
 - Mods folder sekarang dibaca — file di `Carbon/mods` yang namanya sama dengan file di disc dibaca duluan, jadi mod pengganti file bisa jalan; foldernya dicek pas game mulai dan dicatat di log.
 - Mobil tidak putih lagi pas PANTULAN MOBIL di OFF — pas OFF, muka cube refleksi tidak pernah digambar, jadi port tidak kenal lagi cube-nya dari target yang ada dan mobil jatuh ke langit siang bawaan game; sekarang port mengenali cube-nya dari objek teksturnya sendiri (live cube dan STATICENVMAP), jadi mobil dapat refleksi abu-abu gelap.

@@ -3259,8 +3259,15 @@ VkImageView VulkanBackend::BindTexture(const State& s, int stage, DrawTextures& 
         return env_off_.view;
     if (!d.cube && !game::Opt().road_reflections && d.data && d.data == game::g_road_reflection.load())
         return road_off_.view;
-    if (tit != targets_.end() && d.cube && !fi.depth && !fi.compressed)
+    if (tit != targets_.end() && d.cube && !fi.depth && !fi.compressed) {
         if (VkImageView v = BindCubeTargets(stage, d, stages)) return v;
+        // the cube's faces are not all drawn yet (a load, or a rate below FULL): do not fall back to the
+        // shipped guest-memory cube, a bright daylight sky that turns the car white — dark grey until
+        // the faces are drawn again
+        return env_off_.view;
+    }
+    // the env cube before its first face is drawn: same, never read the shipped cube
+    if (d.cube && !fi.depth && !fi.compressed && d.data == game::g_env_cube.load()) return env_off_.view;
     return BindGuestTexture(s, stage, d, fi, stages);
 }
 

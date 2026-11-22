@@ -79,9 +79,24 @@ void ApplyGraphicsSwitches() {
     }
     if (mem::IsCommitted(kEnvMapSwitch)) {
         static uint32_t frame = 0;
+        // after a load the env cube's faces are gone until the env block renders them; force the block
+        // on for the first few frames of a race so the cube is assembled at once, not up to a whole
+        // rate period later (never when reflections are OFF: the faces would be rendered and ignored)
+        static uint32_t force = 0;
+        static bool was_racing = false;
+        bool racing = Racing();
+        if (racing && !was_racing && o.reflections < 3) force = 4;
+        was_racing = racing;
         uint32_t rate = o.reflections;
         uint32_t every = rate < 3 ? 1u << rate : 512;
-        kernel::G<uint8_t>(kEnvMapSwitch) = (frame++ % every == 0) ? 1 : 0;
+        uint8_t pulse;
+        if (force > 0) {
+            force--;
+            pulse = 1;
+        } else {
+            pulse = (frame++ % every == 0) ? 1 : 0;
+        }
+        kernel::G<uint8_t>(kEnvMapSwitch) = pulse;
     }
     if (IsCommittedRange(kRoadReflectionSwitch, 4)) {
         kernel::W32(kRoadReflectionSwitch, o.road_reflections ? 1u : 0u);

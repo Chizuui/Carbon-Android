@@ -660,6 +660,25 @@ X86_FUNC(sub_00242FD0) {
                 }
             }
         }
+        // After the repair: if no 1b58 handle resolves to a valid car and there is no fallback car
+        // at all, the game's own lookup (sub_0007B720) returns NULL and 0x2432F5 dereferences
+        // [esi+0x08] — the world-map crash. Do not call the original in that case: the race load
+        // cannot spawn cars from a db with no valid car anyway. This is a mitigation, not a repair
+        // of the degenerate car_db — and 242FD0 also spawns the race cars, so skipping it may break
+        // the race load in a different way; the log line tells us it fired.
+        bool any_valid = false;
+        for (uint32_t idx = 0; idx < max_idx; idx++) {
+            uint32_t hh = QueryFeVar(ctx, base, 0x1B58u, idx, 0xFFFFFFFFu);
+            uint32_t ss = FindCarSlotInDb(car_db, hh);
+            if (ss && ((kernel::R32(ss + 0x0Cu) & kCarOwnedFlag) != 0 || IsKnownCarType(kernel::R32(ss + 8u)))) { any_valid = true; break; }
+        }
+        if (!any_valid && PickFallbackCarHandle(car_db, h1b60) == 0) {
+            uint32_t h0 = QueryFeVar(ctx, base, 0x1B58u, 0, 0xFFFFFFFFu);
+            uint32_t slot0 = FindCarSlotInDb(car_db, h0);
+            LOGR("career: 242FD0 no valid car, skipping (career=%08X flow=%u 1b58[0]=%08X slot=%08X type=%08X flags=%08X)", career, flow, h0, slot0, slot0 ? kernel::R32(slot0 + 8u) : 0, slot0 ? kernel::R32(slot0 + 0x0Cu) : 0);
+            ctx.esp += 8;  // pop the return address + the 1 stack arg, like the original's ret 4
+            return;
+        }
     }
     __imp__sub_00242FD0(ctx, base);
 }

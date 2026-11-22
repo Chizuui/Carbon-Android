@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Crash di world map dibenerin — kalau database mobil career tidak punya satu pun mobil yang valid (tidak ada mobil pengganti sama sekali), game sebelumnya tetap maksa lanjut dan crash pas nyari mobilnya; sekarang proses load mobilnya dilewatin aja biar tidak crash, dan log-nya nyatet kenapa.
 - Hook SearchForString dihapus total — lookup string game sekarang jalan tanpa hook sama sekali, jadi semua teks tampil apa adanya dari game; efek sampingnya, string yang tidak ada terjemahannya kembali nunjukkin placeholder "UNLOCALIZED" (sebelumnya dibersihkan jadi string kosong).
 - "Tap anywhere to begin" dibalikin ke aslinya — layar judul sekarang nunjukkin "Press START" lagi dan tap di layar kosong tidak lagi lanjut; lanjutinnya pakai tombol START (pill START di layar atau Start di gamepad), dan tap di menu cuma milih tombol, bukan konfirmasi.
 - Mobil tidak putih lagi pas PANTULAN MOBIL di OFF — pas OFF, muka cube refleksi tidak pernah digambar, jadi port tidak kenal lagi cube-nya dari target yang ada dan mobil jatuh ke langit siang bawaan game; sekarang port mengenali cube-nya dari objek teksturnya sendiri (live cube dan STATICENVMAP), jadi mobil dapat refleksi abu-abu gelap.

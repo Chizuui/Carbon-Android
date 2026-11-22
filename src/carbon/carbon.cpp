@@ -698,6 +698,43 @@ X86_FUNC(sub_00094F30) {
     __imp__sub_00094F30(ctx, base);
 }
 
+// The career's car database is degenerate: a career is loaded, but no 1b58 handle resolves to a valid
+// car and there is no fallback car at all. The same state that makes 242FD0 skip also breaks the
+// race-mode notify (sub_00240DE0): one of its virtual calls returns NULL and the game dereferences
+// [NULL+0x04] at 0x240E88 (tester log carbon-prev-349c0b48.log: crash right after the 242FD0 skip).
+// Returns true only when a career is loaded and its db is in that state; false when no career is
+// loaded (then there is no db to be degenerate) or when a valid car exists.
+static bool CareerHasNoValidCar(const X86Context& ctx, uint8_t* base) {
+    uint32_t sys = game::IsCommittedRange(game::kCareerRoot, 4) ? kernel::R32(game::kCareerRoot) : 0;
+    uint32_t count = game::IsCommittedRange(sys + 0xD8u, 4) ? kernel::R32(sys + 0xD8u) : 0;
+    uint32_t list = (count > 0 && game::IsCommittedRange(sys + 0xD4u, 4)) ? kernel::R32(sys + 0xD4u) : 0;
+    uint32_t career = game::IsCommittedRange(list, 4) ? kernel::R32(list) : 0;
+    if (career < 0x10000u || !game::IsCommittedRange(career + 0x234u, 0xC8u * 0x14u)) return false;
+    uint32_t car_db = career + 0x234u;
+    uint32_t h1b60 = QueryFeVar(ctx, base, 0x1B60u, 0xFFFFFFFFu, 0xFFFFFFFFu);
+    uint32_t max_idx = (game::IsCommittedRange(0x497D44u, 4) && kernel::R32(0x497D44u) == 1u) ? 2u : 1u;
+    for (uint32_t idx = 0; idx < max_idx; idx++) {
+        uint32_t h = QueryFeVar(ctx, base, 0x1B58u, idx, 0xFFFFFFFFu);
+        uint32_t slot = FindCarSlotInDb(car_db, h);
+        if (slot && ((kernel::R32(slot + 0x0Cu) & kCarOwnedFlag) != 0 || IsKnownCarType(kernel::R32(slot + 8u)))) return false;
+    }
+    return PickFallbackCarHandle(car_db, h1b60) == 0;
+}
+
+// Race-mode notify (0x240DE0): during the race load it walks the mode objects at [0x46EC64] and calls
+// a virtual method on each; for the degenerate career (no valid car) one of those calls returns NULL
+// and the game dereferences [NULL+0x04] at 0x240E88. Skip the notify in that state — the same
+// mitigation as 242FD0. 240DE0 is a thiscall with 1 stack arg and ret 4, so the skip pops 8.
+X86_EXTERN_FUNC(__imp__sub_00240DE0);
+X86_FUNC(sub_00240DE0) {
+    if (CareerHasNoValidCar(ctx, base)) {
+        LOGR("career: 240DE0 no valid car, skipping");
+        ctx.esp += 8;  // pop the return address + the 1 stack arg, like the original's ret 4
+        return;
+    }
+    __imp__sub_00240DE0(ctx, base);
+}
+
 // Buy-car unlock (0xA19E0, FeVar op 0x1B59): when a car is bought the game clones the template slot
 // into car_db (sub_0009CD00, flags low16 = 0x0004) and stores the new handle at career+0x26230, but it
 // never writes the car's id into the unlock table [0x45680C]. The car-select listing filters on that

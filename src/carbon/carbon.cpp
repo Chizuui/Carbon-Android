@@ -64,11 +64,13 @@ constexpr uint32_t kEnvMapSwitch = 0x3F96BA;
 constexpr uint32_t kRoadReflectionSwitch = 0x3F972C;
 constexpr uint32_t kRoadReflectionView = 0x492F80;  // eView[4], RenderTarget pointer at +0x50 (0x492FD0)
 constexpr uint32_t kEnvMapFace0Target = 0x493750;   // EnvMap face 0 RenderTarget pointer (checked at 0x1121E4)
-// The paint's env stage (stage 1) binds one of these two texture objects, picked at 0xFF200/0xFF280 by
-// [0x45D33C]: the live cube, whose faces the env block renders, and STATICENVMAP, the shipped bright sky
-// loaded by name at 0x10B640. Both are used only as the env stage, never as a skybox or anything else.
+// The paint's env stage (stage 1) binds one of these three texture objects, picked at 0xFF200/0xFF280 by
+// [0x46D280] and [0x45D33C]: the live cube, whose faces the env block renders, STATICENVMAP, the shipped bright
+// sky loaded by name at 0x10B640, and the garage/frontend env map, a runtime-built 6-face object (0x1034xx)
+// used outside the race world. All three are used only as the env stage, never as a skybox or anything else.
 constexpr uint32_t kEnvCubeTexture = 0x45CA6C;      // live env cube texture object
 constexpr uint32_t kStaticEnvTexture = 0x45CA94;    // STATICENVMAP texture object
+constexpr uint32_t kGarageEnvTexture = 0x45C8A8;    // garage/frontend env map texture object
 constexpr uint32_t kCarShadowSwitch = 0x4084FC;
 
 // The colour data of a RenderTarget's D3DSurface ([target + 8] -> [surface + 4] physical addr).
@@ -120,6 +122,7 @@ void ApplyGraphicsSwitches() {
     // (reflections OFF): their addresses are fixed, the objects are built at load
     g_env_cube_tex = kEnvCubeTexture;
     g_static_env_tex = kStaticEnvTexture;
+    g_garage_env_tex = kGarageEnvTexture;
 }
 
 // Carbon cheats:

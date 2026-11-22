@@ -3263,6 +3263,12 @@ VkImageView VulkanBackend::BindTexture(const State& s, int stage, DrawTextures& 
          s.textures[size_t(stage)] == game::g_env_cube_tex.load() ||
          s.textures[size_t(stage)] == game::g_static_env_tex.load()))
         return env_off_.view;
+    // the garage/frontend env map (0x45C8A8): a shipped static env texture, bound as the paint's env stage
+    // outside the race world at any reflection setting. Its bright sky washes the paint flat white, the same
+    // way the other env textures did before they were matched — dark grey here too, never the shipped sky.
+    // Matched on the object alone, not on d.cube: Describe may report it as a single face, not a cube.
+    if (s.textures[size_t(stage)] == game::g_garage_env_tex.load())
+        return env_off_.view;
     if (!d.cube && !game::Opt().road_reflections && d.data && d.data == game::g_road_reflection.load())
         return road_off_.view;
     if (tit != targets_.end() && d.cube && !fi.depth && !fi.compressed) {

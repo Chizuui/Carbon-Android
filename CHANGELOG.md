@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Mobil tidak putih lagi di garasi / paint shop — di luar balapan, cat mobil pakai env map ketiga yang belum dikenali port, jadi catnya ketimpa langit siang bawaan game dan jadi putih; sekarang env map itu juga dikenali dan mobil dapat refleksi abu-abu gelap kayak env map lainnya.
 - Crash di garasi dibenerin — pas game nyari nama mobil yang handle-nya tidak ada di database mobil career, lookup-nya ngasih NULL dan game crash pas baca nama mobil itu; sekarang kalau objek mobilnya NULL langsung dikasih 0 (sama kayak yang game sendiri lakuin di tempat lain), jadi tidak crash lagi.
 - Crash pas dari world map mau loading balapan sudah diperbaiki — guard yang benerin mobil career cuma jalan pas flow career (3), padahal game juga manggil fungsi itu pas flow world map/loading (5) dan crash karena handle mobilnya jelek; sekarang repair-nya jalan kapanpun career sudah ke-load, jadi crash yang sama tidak terulang.
 - Crash di world map dibenerin — kalau database mobil career tidak punya satu pun mobil yang valid (tidak ada mobil pengganti sama sekali), game sebelumnya tetap maksa lanjut dan crash pas nyari mobilnya; sekarang proses load mobilnya dilewatin aja biar tidak crash, dan log-nya nyatet kenapa.

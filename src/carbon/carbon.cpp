@@ -710,18 +710,14 @@ X86_FUNC(sub_00242FD0) {
     uint32_t count = game::IsCommittedRange(sys + 0xD8u, 4) ? kernel::R32(sys + 0xD8u) : 0;
     uint32_t list = (count > 0 && game::IsCommittedRange(sys + 0xD4u, 4)) ? kernel::R32(sys + 0xD4u) : 0;
     uint32_t career = game::IsCommittedRange(list, 4) ? kernel::R32(list) : 0;
-    // The game itself only resolves career cars when GameFlowState==3 (sub_0027D970: cmp [0x46D280],3).
-    // This guard used to run its repair on every 242FD0 call regardless of state, which is what produced the
-    // "car_db empty" log spam: it ran while no career was loaded yet and found nothing to repair. Gate the
-    // repair the same way the game does; when gated out, log once per state value and do not touch the FeVars.
+    // The game calls sub_00242FD0 outside the career state too — a tester log (carbon-eb6cb416.log)
+    // crashed in it at GameFlowState==5 (world map -> Loading_Controller) right after this guard gated
+    // the repair out for flow!=3. The repair must run whenever a career is actually loaded, whatever
+    // the flow is; the career-validity gate below is what keeps the old "car_db empty" spam away (it
+    // only ran while no career was loaded yet and found nothing to repair). When no career is loaded,
+    // log once per flow value and do not touch the FeVars.
     uint32_t flow = game::IsCommittedRange(game::kGameFlowState, 4) ? kernel::R32(game::kGameFlowState) : 0xFFFFFFFFu;
-    if (flow != game::kGameFlowCareer) {
-        static uint32_t last_gated_flow = 0xFFFFFFFFu;
-        if (flow != last_gated_flow) {
-            LOGR("career: 242FD0 guard gated out (flow=%u), skipping repair", flow);
-            last_gated_flow = flow;
-        }
-    } else if (career >= 0x10000u && game::IsCommittedRange(career + 0x234u, 0xC8u * 0x14u)) {
+    if (career >= 0x10000u && game::IsCommittedRange(career + 0x234u, 0xC8u * 0x14u)) {
         uint32_t car_db = career + 0x234u;
         uint32_t wing = QueryFeVar(ctx, base, 0x1771u, 0xFFFFFFFFu, 0u);
         uint32_t h1b60 = QueryFeVar(ctx, base, 0x1B60u, 0xFFFFFFFFu, 0xFFFFFFFFu);
@@ -755,6 +751,12 @@ X86_FUNC(sub_00242FD0) {
                     if (!found) LOGR("career: handle %08X not found in career+0..0x3000", h);
                 }
             }
+        }
+    } else {
+        static uint32_t last_gated_flow = 0xFFFFFFFFu;
+        if (flow != last_gated_flow) {
+            LOGR("career: 242FD0 guard gated out (flow=%u), no career loaded", flow);
+            last_gated_flow = flow;
         }
     }
     __imp__sub_00242FD0(ctx, base);

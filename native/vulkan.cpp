@@ -553,7 +553,7 @@ struct Target {
     Image fb;                     // copy read by draws that sample the target they render to
 };
 
-// a cube whose faces are targets (Most Wanted's car reflection, six 128x128 faces drawn each frame), copied together
+// a cube whose faces are targets (the car reflection, six faces drawn each frame), copied together
 struct CubeOfTargets {
     Image img;
     uint64_t writes[6] = {};  // each face's Target::writes when last copied
@@ -2842,9 +2842,9 @@ void VulkanBackend::ReleaseTarget(std::unordered_map<uint64_t, Target>::iterator
     targets_.erase(it);
 }
 
-// The game's effect buffers, smaller than the frame and of its shape (Most Wanted's 320x240 glow and blur, its 80x60),
-// near the console's size. Their passes sample the frame and each other with a box of taps that grows with the scale
-// (FillTexelConstants), so at the frame's scale they cost its fourth power: most of the GPU's frame at 3x. They are
+// The game's effect buffers, smaller than the frame and of its shape (the glow and blur at 80x60, the pause blur at
+// half res), near the console's size. Their passes sample the frame and each other with a box of taps that grows with
+// the scale (FillTexelConstants), so at the frame's scale they cost its fourth power: most of the GPU's frame at 3x. They are
 // blurred anyway, so they are capped at the console's scale; the square ones are the car-reflection cube faces,
 // blurred into the paint the same way, so they are capped too instead of rendering six views at the frame's scale
 float VulkanBackend::TargetScale(uint64_t key, uint32_t gw, uint32_t gh) const {
@@ -3370,8 +3370,8 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     // the targets, CPU writes to them first
     Target* rt = EnsureTarget(s.rt, false);
     Target* ds = s.rs[kRsZEnable] || s.rs[kRsStencilEnable] ? EnsureTarget(s.zs, true) : nullptr;
-    // the zeta has a pitch of its own: a depth buffer wider than the target (Most Wanted's is the multisampled 1280x480
-    // under its 640x480 frame) serves its top left corner; one smaller cannot
+    // the zeta has a pitch of its own: a depth buffer wider than the target serves its top left corner; one smaller
+    // cannot
     if (rt && ds && (rt->w > ds->w || rt->h > ds->h)) {
         LOG_FIRST(16, "vulkan: depth %08X %ux%u dropped for the larger target %08X %ux%u", s.zs.data, ds->w, ds->h, s.rt.data, rt->w, rt->h);
         ds = nullptr;

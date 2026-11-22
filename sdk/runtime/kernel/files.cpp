@@ -625,7 +625,7 @@ KERNEL_EXPORT(218, NtQueryVolumeInformationFile, 5) {
 
 // (file object, class, length, out, returned length): XAPI asks the file system's name of an object from
 // ObReferenceObjectByHandle, then reads the FATX or GDFX device's own records through it, which a host file has
-// none of. Failing is what a title's caller handles: Most Wanted's disc position of a file (0x2BE8EE) becomes 0.
+// none of. Failing is what a title's caller handles: a host file has no disc position, so it becomes 0.
 KERNEL_EXPORT(76, IoQueryVolumeInformation, 5) {
     LOG_FIRST(4, "IoQueryVolumeInformation: class %u, no volume behind a host file", a[1]);
     return kInvalidParameter;

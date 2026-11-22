@@ -412,14 +412,14 @@ struct Button {
 };
 // the layout is set in the settings panel (TOUCH CONTROLS): its steering, opacity, size, and the editor that moves the
 // controls, see the functions at the end. A Text control shows its label.
-// the face buttons' captions are Carbon's controls (Y: Crew Member, A: Handbrake, B: Nitrous, X: Speedbreaker, Black: Shift Up, White: Shift Down)
+// the face buttons' captions are Carbon's controls (Y: Crew Member, A: Handbrake, B: Nitrous, X: Speedbreaker, Black: Change Camera, White: Rear View)
 constexpr Button kButtons[] = {
     {"a", "A", Icon::Text, kAnalogA, Shape::Round, "E-BRAKE"},
     {"b", "B", Icon::Text, kAnalogB, Shape::Round, "NITROUS"},
     {"x", "X", Icon::Text, kAnalogX, Shape::Round, "SPEEDBREAKER"},
     {"y", "Y", Icon::Text, kAnalogY, Shape::Round, "CREW MEMBER"},
-    {"black", "BLACK", Icon::Text, 4, Shape::Tab, "SHIFT UP"},
-    {"white", "WHITE", Icon::Text, 5, Shape::Round, "SHIFT DOWN"},
+    {"black", "BLACK", Icon::Text, 4, Shape::Tab, "CHANGE CAMERA"},
+    {"white", "WHITE", Icon::Text, 5, Shape::Round, "REAR VIEW"},
     {"lt", "LT", Icon::Text, kAnalogLT, Shape::Tab},
     {"rt", "RT", Icon::Text, kAnalogRT, Shape::Tab},
     {"start", "START", Icon::Text, kBit + 4, Shape::Pill},
@@ -1289,8 +1289,8 @@ void DumpGuest() {
     static int n = 0;
     std::filesystem::path p = app::ExeDir() / ("dump_" + std::to_string(n++) + ".bin");
     std::ofstream f(p, std::ios::binary);
-    // the image, 0x10000 to 0x508040 (default.xbe's base and size), then the physical memory
-    f.write(static_cast<const char*>(kernel::HostPtr(0x10000)), 0x508040 - 0x10000);
+    // the image, 0x10000 to 0x4DE7C0 (default.xbe's base and size), then the physical memory
+    f.write(static_cast<const char*>(kernel::HostPtr(0x10000)), 0x4DE7C0 - 0x10000);
     f.write(static_cast<const char*>(kernel::HostPtr(0x80000000u)), 64u << 20);
     LOGI("dump: %s", p.c_str());
 }

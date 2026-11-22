@@ -95,9 +95,21 @@ void ExportLog() {
         std::snprintf(name, sizeof(name), "%s-%04d%02d%02d-%02d%02d%02d.log", stem.c_str(), tm.tm_year + 1900,
                       tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
         std::error_code ec;
-        // the log sits in <shared>/logs, so its parent's parent's parent is the storage root, and Download
-        // is beside it
-        std::filesystem::path download = from.parent_path().parent_path().parent_path() / "Download" / name;
+        // Download is beside the shared folder on the storage root. The log normally sits in
+        // <shared>/logs, so its parent's parent's parent is that root — but when the log fell back
+        // to the app's own folder (no all-files access yet), the same walk lands inside Android/data
+        // instead, and the export would report SAVED while buried in app storage
+        std::string shared_name;
+        for (const wchar_t* p = kGame.name; *p; ++p) shared_name += static_cast<char>(*p);
+        std::filesystem::path log_dir = from.parent_path();
+        std::filesystem::path download_dir;
+        if (log_dir.filename().string() == "logs" &&
+            log_dir.parent_path().filename().string() == shared_name) {
+            download_dir = log_dir.parent_path().parent_path() / "Download";
+        } else {
+            download_dir = std::filesystem::path("/storage/emulated/0") / "Download";
+        }
+        std::filesystem::path download = download_dir / name;
         std::filesystem::create_directories(download.parent_path(), ec);
         ec.clear();
         std::filesystem::copy_file(from, download, ec);
@@ -915,7 +927,7 @@ void DrawDisplayPage() {
     for (const Row& r : kGraphicsRows) {
         // YELLOW TINT is a dead setting in Carbon (no Carbon hook applies it), so hide the row there; Most
         // Wanted keeps it, its tint hook lives in src/game/game.cpp
-        if (r.id == kYellowTint && std::wcscmp(kGame.short_title, L"NFS Carbon") == 0) continue;
+        if (r.id == kYellowTint && std::wcscmp(kGame.short_title, L"Carbon") == 0) continue;
         if (r.id == kLowEndPreset || r.id == kMidPreset || r.id == kHighPreset) continue;
         if (r.kind == Kind::Heading) {
             if (in_card) CardEnd();

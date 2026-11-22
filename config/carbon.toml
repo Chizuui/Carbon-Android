@@ -269,7 +269,7 @@ XOnlineCleanup                                       = 0
 XOnlineStartup                                       = 0
 
 [data]
-# loaded by D3DDevice_SetVertexShader (0x3599C9) for an FVF handle; Streams + 0x1D8 as in Most Wanted
+# loaded by D3DDevice_SetVertexShader (0x3599C9) for an FVF handle; Streams + 0x1D8
 D3D_FvfShader               = 0x36A798
 D3D_DeferredTextureState    = 0x367C80
 D3D_Device                  = 0x368120

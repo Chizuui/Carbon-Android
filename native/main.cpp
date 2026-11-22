@@ -454,7 +454,7 @@ void InitUi() {
     touch::LoadArt();
 }
 
-// The logs go in the MostWanted folder beside the game, where the player finds them without Android/data (which
+// The logs go in the Carbon folder beside the game, where the player finds them without Android/data (which
 // Android 11 on hides from file managers); without all files access yet (the first run asks for it), in the app's own
 // folder as before
 std::filesystem::path LogDir() {

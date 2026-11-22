@@ -178,8 +178,19 @@ public class MostWantedActivity extends SDLActivity {
             android.widget.LinearLayout.LayoutParams creditParams = new android.widget.LinearLayout.LayoutParams(
                     android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
                     android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
-            creditParams.setMargins(0, 0, 0, 24);
+            creditParams.setMargins(0, 0, 0, 8);
             layout.addView(creditText, creditParams);
+
+            // Base credit
+            android.widget.TextView baseText = new android.widget.TextView(this);
+            baseText.setText(getString(R.string.base_credit));
+            baseText.setTextSize(18);
+            baseText.setGravity(android.view.Gravity.CENTER);
+            android.widget.LinearLayout.LayoutParams baseParams = new android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+            baseParams.setMargins(0, 0, 0, 24);
+            layout.addView(baseText, baseParams);
             
             // Donate button
             android.widget.Button donateBtn = new android.widget.Button(this);

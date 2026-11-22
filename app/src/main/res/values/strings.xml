@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="port_credit">Port by Rangga Casper</string>
+    <string name="port_credit">Port by Chizui</string>
+    <string name="base_credit">Base by Rangga Casper</string>
     <string name="donate">Donate</string>
-    <string name="donate_url" translatable="false">https://sociabuzz.com/racas/tribe</string>
+    <string name="donate_url" translatable="false">https://sociabuzz.com/chizuui/tribe</string>
     <string name="credits">Credits</string>
     <string name="github" translatable="false">GitHub</string>
     <string name="youtube" translatable="false">YouTube</string>
-    <string name="github_url" translatable="false">https://github.com/RanggaCasper</string>
-    <string name="youtube_url" translatable="false">https://youtube.com/c/@RanggaCasper</string>
+    <string name="github_url" translatable="false">https://github.com/Chizuui/Carbon-Android</string>
+    <string name="youtube_url" translatable="false">https://youtube.com/@sashachan1?si=hCetsT_IV_9tSrpa</string>
     <string name="close">Close</string>
 
     <!-- updates -->

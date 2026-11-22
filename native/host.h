@@ -14,7 +14,7 @@ namespace host {
 // the shared storage's folder for the game, readable and writable with all files access (game_files.cpp); the name is
 // the game's, set by app/build.gradle
 #ifndef XBE_SHARED_DIR
-#define XBE_SHARED_DIR "MostWanted"
+#define XBE_SHARED_DIR "Carbon"
 #endif
 inline constexpr const char* kShared = "/storage/emulated/0/" XBE_SHARED_DIR;
 

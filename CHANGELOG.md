@@ -1,5 +1,9 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Bersih-bersih sisa Most Wanted — label game sekarang "Carbon" (judul log tidak lagi dobel "Need for Speed: NFS Carbon"), kredit Java diperbaiki jadi "Port by Chizui" + "Base by Rangga Casper" dengan link Donate/GitHub/YouTube yang benar, caption tombol BLACK/WHITE jadi "CHANGE CAMERA"/"REAR VIEW", dan alamat-alamat MW yang basi di komen sudah dibersihkan; file XBE Most Wanted yang tidak terpakai (`ci/default.xbe.enc`) dihapus.
+- EXPORT LOG sekarang selalu mendarat di Download — kalau log sedang di folder fallback (folder aplikasi sendiri), jalurnya diambil dari folder Carbon, bukan lagi nyasar ke dalam Android/data.
+- DumpGuest sekarang memakai ukuran image Carbon yang benar (berakhir di 0x4DE7C0, bukan 0x508040).
+
 - SKIP MOVIES dimatikan dulu — setelah dicek lebih dalam, alamat yang ditulis tiap frame ternyata belum terbukti sebagai flag skip-movies (tidak ada kaitannya sama movie player), jadi tulisannya dihapus biar tidak merusak opsi game; tombolnya tetap ada tapi belum ada efeknya sampai terbukti.
 - Sun glare balik lagi — game ternyata memakai hasil tes visibilitas buat ngatur terang glare matahari, tapi port selalu jawab 0 sehingga glare mengecil sampai hilang; sekarang dijawab "matahari kelihatan penuh", jadi glare muncul lagi pas matahari di langit.
 - Guard mobil career sekarang cuma jalan pas career beneran ke-load (GameFlowState==3, sama seperti game-nya) — log "car_db empty" yang spam pas career belum ke-load hilang; plus fallback guard tidak lagi milih mobil cuma berdasarkan flag yang belum terbukti artinya.

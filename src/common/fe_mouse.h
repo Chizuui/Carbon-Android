@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
 
-// Most Wanted's FEng mouse, the touch screen (src/game/fe_mouse.cpp)
+// Carbon's FEng mouse, the touch screen (src/carbon/carbon.cpp)
 namespace game {
 
 void FeFrame();             // game thread, at each present

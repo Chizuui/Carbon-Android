@@ -77,10 +77,10 @@ const std::string& BootLanguage() {
 
 // -DXBE_SHARED_DIR, XBE_GAME_LABEL, XBE_SETTINGS, XBE_LOG: set by app/build.gradle for the game this build is
 #ifndef XBE_SHARED_DIR
-#define XBE_SHARED_DIR "MostWanted"
-#define XBE_GAME_LABEL "Most Wanted"
-#define XBE_SETTINGS "mostwanted.toml"
-#define XBE_LOG "mostwanted"
+#define XBE_SHARED_DIR "Carbon"
+#define XBE_GAME_LABEL "Carbon"
+#define XBE_SETTINGS "carbon.toml"
+#define XBE_LOG "carbon"
 #endif
 #define WIDE_(s) L##s
 #define WIDE(s) WIDE_(s)

@@ -360,18 +360,18 @@ void FreeSurface(uint32_t hdr, bool titles = false) {
     mem::FreeSystem(hdr);
 }
 
-// The title's own frame buffers (Most Wanted's): the library copies each header the present parameters give into
-// a record of its own (0x3789D0), the back buffer first, and Swap turns those copies over. The title's headers are
-// its own business: Most Wanted trades their memory itself before each Swap (0x0C8DA3), for the textures its
-// visual treatment reads, and turning them here as well undid that every frame.
+// The title's own frame buffers: the library copies each header the present parameters give into a record of its
+// own, the back buffer first, and Swap turns those copies over. The title's headers are its own business —
+// Carbon never trades their memory before a Swap (its present path calls D3DDevice_Swap directly) — so the host
+// copies only follow the title's current data pointers (SyncTitleBuffers) and the title's headers are never
+// written here.
 void CopyTitleBuffers(const PresentParams& p) {
     for (uint32_t i = 0; i < g_buffer_count; i++) {
         // the library's list is back buffers then the front; here the front is first
         uint32_t src = p.surfaces[i == 0 ? g_buffer_count - 1 : i - 1];
         if (!g_buffers[i]) g_buffers[i] = mem::AllocSystem(kSurfaceBytes);
         // the title's memory in a record of the frame's shape, as NewSurface makes one: the swap turns the memory
-        // over, and a record keeping a wider header's size (Most Wanted's first buffer says 1280x480) would reach
-        // past a 640x480 buffer it is turned onto
+        // over, and a record keeping a wider header's size would reach past a 640x480 buffer it is turned onto
         uint32_t h = g_buffers[i], pitch = (p.width * 4 + 63) & ~63u;
         W32(h + kResCommon, 0x000D0001);  // surface, one reference, one internal reference held by the device
         W32(h + kResData, R32(src + kResData));
@@ -610,9 +610,9 @@ HLE_STDCALL(D3DDevice_IsFencePending, 1) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     return g_backend && g_backend->FencePending(a[0]) ? 1 : 0;
 }
-// The library compares the miniport's FIFO pointers, which no host GPU moves. Most Wanted spins on it until idle
-// (0x0BEB30), and a fence of its own would always be pending at the moment it is asked: idle, as the locks and
-// fences already wait on the replay where the title touches what the GPU reads
+// The library compares the miniport's FIFO pointers, which no host GPU moves. The game spins on it until idle,
+// and a fence of its own would always be pending at the moment it is asked: idle, as the locks and fences already
+// wait on the replay where the title touches what the GPU reads
 #if HAS_D3DDevice_IsBusy
 HLE_STDCALL(D3DDevice_IsBusy, 0) { return 0; }
 #endif
@@ -781,10 +781,9 @@ void RotateBuffers() {
 // how many swaps followed the title's headers, and how many fell back to rotating the host copies
 uint64_t g_synced_swaps = 0, g_rotated_swaps = 0;
 
-// the title may trade its own buffer headers' memory before each Swap, as Most Wanted does at 0x0C8DA3 for the
-// textures its visual treatment reads: the host copies then have to follow the title's headers, or the treatment
-// samples the buffer being drawn instead of the finished one and the scene goes black every other frame, the
-// directly drawn UI steady on top. copy the title's current data pointers into the host copies, in the same
+// the title's buffer headers move between swaps, so the host copies have to follow the title's headers, or the
+// treatment samples the buffer being drawn instead of the finished one and the scene goes black every other frame,
+// the directly drawn UI steady on top. copy the title's current data pointers into the host copies, in the same
 // mapping as CopyTitleBuffers; true when any of them moved, so the caller rotates only when the title did not
 bool SyncTitleBuffers() {
     if (g_buffer_count < 2) return false;
@@ -1293,7 +1292,7 @@ HLE_FASTCALL(D3DDevice_SetVertexShaderConstantNotInlineFast, 1) {
 // SelectVertexShaderDirect, whose record holds a D3DVERTEXATTRIBUTEFORMAT rather than a declaration.
 namespace {
 constexpr uint32_t kProgramSlots = 136;
-constexpr uint32_t kRecordAttributeFormat = 0x14;  // SelectVertexShaderDirect (0x372F2F) copies the format there
+constexpr uint32_t kRecordAttributeFormat = 0x14;  // SelectVertexShaderDirect copies the format there
 std::array<std::array<uint32_t, 4>, kProgramSlots> g_program_slots{};
 std::shared_ptr<gpu::VertexShader> g_select_inputs;  // the last selected inputs, kept by a select of handle 0
 uint32_t g_select_handle = 0;

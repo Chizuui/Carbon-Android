@@ -543,6 +543,13 @@ int main(int, char**) {
     InitUi();
     input::Init();
     if (app::kGame.window) app::kGame.window(g_window);
+    // what the Mods Loader wrote is read instead of the disc's files
+    std::filesystem::path mods = std::filesystem::path(host::kShared) / "mods";
+    std::error_code mods_ec;
+    if (std::filesystem::is_directory(mods, mods_ec)) {
+        kernel::SetDiscOverlay(mods.string());
+        LOGR("app: mods in %s", mods.c_str());
+    }
     if (!kernel::Boot(std::move(game.xbe), IMAGE_XBE, game.dir.string(), (app::ExeDir() / "hdd").string())) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, Utf8(app::kGame.short_title).c_str(),
                                  app::Ui("The game failed to start, see the log in the logs folder.", false).c_str(),

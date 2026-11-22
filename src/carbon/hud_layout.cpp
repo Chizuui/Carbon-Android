@@ -180,3 +180,26 @@ X86_FUNC(sub_00158AE0) {
     __imp__sub_00158AE0(ctx, base);
 }
 
+// The same stale-origin defect in the remaining Hud_Minimap readers of +0xB4/+0xB8: the target ring
+// (TRACKMAPTARGETRING) and the other map elements they position stay at the unmoved map's origin when the
+// minimap is dragged, because only 158520/158AE0 above were shifted. All three take the minimap in ecx
+// (esi is copied from ecx at entry, and the origin is read via esi) — 15870A's `this` is inferred from the
+// same pattern, it has no direct callers in the recompiled code.
+X86_EXTERN_FUNC(__imp__sub_001581D0);
+X86_FUNC(sub_001581D0) {
+    game::MinimapOriginScope scope(ctx.ecx);
+    __imp__sub_001581D0(ctx, base);
+}
+
+X86_EXTERN_FUNC(__imp__sub_0015870A);
+X86_FUNC(sub_0015870A) {
+    game::MinimapOriginScope scope(ctx.ecx);
+    __imp__sub_0015870A(ctx, base);
+}
+
+X86_EXTERN_FUNC(__imp__sub_00165C00);
+X86_FUNC(sub_00165C00) {
+    game::MinimapOriginScope scope(ctx.ecx);
+    __imp__sub_00165C00(ctx, base);
+}
+

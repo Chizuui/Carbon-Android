@@ -73,6 +73,21 @@ uint32_t KernelThunkAddress(uint32_t ordinal) { return kKernelThunkBase + ordina
 
 void x86_icall(X86Context& ctx, uint8_t* base, uint32_t target) {
     ctx.last_icall = target;
+    // A null function pointer (target 0) is a null virtual/indirect call — the same degenerate state
+    // the null page handles for derefs: a null object's vtable read returns 0, so the call target is
+    // 0 (tester log carbon-prev-c709e279.log: sub_0010F320, call [edx+0x04] at 0x10F36E with edx 0,
+    // after [0x46E264] was 0 because the career has no valid car). Return 0 instead of aborting:
+    // pop the return address (like the callee's ret) and set eax to 0, so the caller's own null
+    // checks can handle it. Only target 0 is swallowed — any other missing target is still a real
+    // config/recompile problem and keeps the trap below. Note: this pops only the return address;
+    // a stdcall callee would also pop its args, so a null stdcall with stack args leaves those bytes
+    // behind — accepted, since the common null virtual call has no stack args and aborting is worse.
+    if (target == 0) {
+        LOG_FIRST(32, "icall: null function pointer, returning 0 (return address %08X)", kernel::R32(ctx.esp));
+        ctx.eax = 0;
+        ctx.esp += 4;  // pop the return address, like the callee's ret
+        return;
+    }
     if (target >= g_lo && target < g_hi && g_continuation[target - g_lo]) throw X86Resume{target, ctx.esp};
     if (X86Func* f = dispatch::Find(target)) {
         f(ctx, base);

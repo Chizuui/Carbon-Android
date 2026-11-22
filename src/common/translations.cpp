@@ -76,7 +76,6 @@ constexpr Entry kEntries[] = {
     {"INFINITE SPEEDBREAKER", {{}, {}, {}, {}, u"Speedbreaker tak terbatas"}},
     {"MAX CASH", {{}, {}, {}, {}, u"Uang maksimal"}},
     {"NO POLICE", {{}, {}, {}, {}, u"Tanpa polisi"}},
-    {"UNLOCK ALL", {{}, {}, {}, {}, u"Buka semua"}},
     {"SKIP MOVIES", {{}, {}, {}, {}, u"Lewati video"}},
     {"CONTROLS OPACITY", {{}, {}, {}, {}, u"Transparansi kontrol"}},
     {"STICK MODE", {{}, {}, {}, {}, u"Mode analog"}},

@@ -48,7 +48,6 @@ struct Options {
     bool cheat_speedbreaker = false;  // the speedbreaker never runs out
     bool cheat_cash = false;          // the career's cash kept at kCheatCash
     bool cheat_no_police = false;     // no new cops or pursuits
-    bool cheat_unlock_all = false;    // every car, part and race unlocked
     bool skip_movies = false;     // currently does nothing: the 0x46D7A0 flag it used to write is unproven as the skip-movies flag, so the write was removed (src/carbon/carbon.cpp)
     uint32_t audio_output = 0;  // audio::kOutputAuto, kOutputStereo, kOutputSurround or kOutputMono
     std::string language = "int";  // one of kLanguages

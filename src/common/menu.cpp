@@ -385,7 +385,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kGyroSensitivity, kTouchOpacity, kTouchSize, kTouchEdit, kCheckUpdates, kAspectRatio, kScreenFilter,
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
-             kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
+             kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice,
              kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kShaderPreload, kBrightness, kLowEndPreset,
              kMidPreset, kHighPreset, kExportLog, kDiscord, kOverlayLayout };
 
@@ -453,7 +453,6 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kCheatSpeedbreaker, "INFINITE SPEEDBREAKER"},
     {Kind::Value, kCheatCash, "MAX CASH"},
     {Kind::Value, kCheatNoPolice, "NO POLICE"},
-    {Kind::Value, kCheatUnlockAll, "UNLOCK ALL"},
 };
 
 // the credits' names, an info row's id; as they are, untranslated
@@ -520,7 +519,6 @@ bool* ToggleFlag(Settings& s, int id) {
         case kCheatSpeedbreaker: return &o.cheat_speedbreaker;
         case kCheatCash: return &o.cheat_cash;
         case kCheatNoPolice: return &o.cheat_no_police;
-        case kCheatUnlockAll: return &o.cheat_unlock_all;
         case kSkipMovies: return &o.skip_movies;
         default: return nullptr;
     }
@@ -691,7 +689,6 @@ void RestoreDefaults(int page) {
         o.cheat_speedbreaker = none.cheat_speedbreaker;
         o.cheat_cash = none.cheat_cash;
         o.cheat_no_police = none.cheat_no_police;
-        o.cheat_unlock_all = none.cheat_unlock_all;
         Changed();
         return;
     }

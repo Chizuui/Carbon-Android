@@ -3254,8 +3254,14 @@ VkImageView VulkanBackend::BindTexture(const State& s, int stage, DrawTextures& 
     // instead of the last one drawn
     constexpr uint32_t kReflectionsOff = 3;
     // by address too: a cube never drawn since the start would read its memory, never written
+    // and by texture object: at OFF the env block (almost) never runs, so no face target is ever created and
+    // g_env_cube stays 0 — the data checks above cannot recognise the stage, and it would fall through to the
+    // shipped STATICENVMAP bright sky. The two env textures (live cube and static fallback) are bound only as
+    // the paint's env stage, so matching their objects is exact.
     if (d.cube && game::Opt().reflections == kReflectionsOff &&
-        (tit != targets_.end() || cubes_.count(d.data) || d.data == game::g_env_cube.load()))
+        (tit != targets_.end() || cubes_.count(d.data) || d.data == game::g_env_cube.load() ||
+         s.textures[size_t(stage)] == game::g_env_cube_tex.load() ||
+         s.textures[size_t(stage)] == game::g_static_env_tex.load()))
         return env_off_.view;
     if (!d.cube && !game::Opt().road_reflections && d.data && d.data == game::g_road_reflection.load())
         return road_off_.view;

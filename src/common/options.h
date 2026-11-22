@@ -61,6 +61,8 @@ const std::string& BootLanguage();
 bool LanguageAvailable(const std::string& code);  // src/game/game.cpp: the LANGUAGE row offers it
 inline std::atomic<uint32_t> g_road_reflection{0};  // the road reflection target's data, virtual; game.cpp, each present
 inline std::atomic<uint32_t> g_env_cube{0};         // the cars' reflection cube's data, the same
+inline std::atomic<uint32_t> g_env_cube_tex{0};     // the cars' reflection cube's texture object, per game; 0 unknown
+inline std::atomic<uint32_t> g_static_env_tex{0};  // the static env map's texture object (STATICENVMAP), per game; 0 unknown
 inline std::atomic<bool> g_focus_paused{false};  // the game thread waits while the app is in the background
 inline std::atomic<uint32_t> g_focus_pauses{0};  // focus pauses ended so far
 inline std::atomic<bool> g_flare_pass{false};  // the eRenderLightFlares pass is running; d3d logs its draws

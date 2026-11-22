@@ -64,6 +64,11 @@ constexpr uint32_t kEnvMapSwitch = 0x3F96BA;
 constexpr uint32_t kRoadReflectionSwitch = 0x3F972C;
 constexpr uint32_t kRoadReflectionView = 0x492F80;  // eView[4], RenderTarget pointer at +0x50 (0x492FD0)
 constexpr uint32_t kEnvMapFace0Target = 0x493750;   // EnvMap face 0 RenderTarget pointer (checked at 0x1121E4)
+// The paint's env stage (stage 1) binds one of these two texture objects, picked at 0xFF200/0xFF280 by
+// [0x45D33C]: the live cube, whose faces the env block renders, and STATICENVMAP, the shipped bright sky
+// loaded by name at 0x10B640. Both are used only as the env stage, never as a skybox or anything else.
+constexpr uint32_t kEnvCubeTexture = 0x45CA6C;      // live env cube texture object
+constexpr uint32_t kStaticEnvTexture = 0x45CA94;    // STATICENVMAP texture object
 constexpr uint32_t kCarShadowSwitch = 0x4084FC;
 
 // The colour data of a RenderTarget's D3DSurface ([target + 8] -> [surface + 4] physical addr).
@@ -111,6 +116,10 @@ void ApplyGraphicsSwitches() {
                             ? TargetData(kernel::R32(kRoadReflectionView + 0x50))
                             : 0;
     g_env_cube = IsCommittedRange(kEnvMapFace0Target, 4) ? TargetData(kernel::R32(kEnvMapFace0Target)) : 0;
+    // the env textures' objects, so Vulkan can recognise the env stage even when no face was ever drawn
+    // (reflections OFF): their addresses are fixed, the objects are built at load
+    g_env_cube_tex = kEnvCubeTexture;
+    g_static_env_tex = kStaticEnvTexture;
 }
 
 // Carbon cheats:

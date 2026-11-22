@@ -544,7 +544,7 @@ struct RepLoader {
                 ready_order.pop_front();
                 auto it = ready.find(old);
                 if (it == ready.end()) continue;
-                ready_bytes -= it->second.bytes;
+                ready_bytes -= it->second->bytes;
                 ready.erase(it);
                 ready_cap.erase(old);
                 asked.erase(old);

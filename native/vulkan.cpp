@@ -3414,6 +3414,17 @@ void VulkanBackend::Draw(const State& s, uint32_t prim, uint32_t start, uint32_t
     draw_rt_ = rt;
     draw_ds_ = ds;
 
+    // Minimap diagnostic (tester_3: the roads spill outside the radar circle): the circular clip is
+    // almost certainly a stencil mask, so log every stencil-enabled draw's targets — a stencil draw
+    // with no depth-stencil target (ds dropped for a larger rt, or a scale rebuild) cannot clip, and
+    // the roads escape. Rate-limited; remove once the cause is known.
+    if (s.rs[kRsStencilEnable]) {
+        LOG_FIRST(32, "vulkan: stencil draw rt=%08X %ux%u guest %ux%u ds=%s %08X %ux%u func=%u mask=%02X wmask=%02X",
+                  s.rt.data, rt ? rt->w : 0, rt ? rt->h : 0, rt ? rt->gw : 0, rt ? rt->gh : 0,
+                  ds ? "yes" : "NO", s.zs.data, ds ? ds->w : 0, ds ? ds->h : 0,
+                  SimpleState(s, kMStencilFunc), SimpleState(s, kMStencilMask) & 0xFF, SimpleState(s, kMStencilWriteMask) & 0xFF);
+    }
+
     DrawShaders sh = ClassifyShaders(s, a);
     if (sh.prog) EnsureProgramHash(s);
     sh.vkey = VertexKey(s, a, sh);

@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Hook SearchForString dihapus total — lookup string game sekarang jalan tanpa hook sama sekali, jadi semua teks tampil apa adanya dari game; efek sampingnya, string yang tidak ada terjemahannya kembali nunjukkin placeholder "UNLOCALIZED" (sebelumnya dibersihkan jadi string kosong).
 - "Tap anywhere to begin" dibalikin ke aslinya — layar judul sekarang nunjukkin "Press START" lagi dan tap di layar kosong tidak lagi lanjut; lanjutinnya pakai tombol START (pill START di layar atau Start di gamepad), dan tap di menu cuma milih tombol, bukan konfirmasi.
 - Mobil tidak putih lagi pas PANTULAN MOBIL di OFF — pas OFF, muka cube refleksi tidak pernah digambar, jadi port tidak kenal lagi cube-nya dari target yang ada dan mobil jatuh ke langit siang bawaan game; sekarang port mengenali cube-nya dari objek teksturnya sendiri (live cube dan STATICENVMAP), jadi mobil dapat refleksi abu-abu gelap.
 - Mobil tidak putih lagi pas PANTULAN MOBIL bukan FULL — kalau cube refleksi belum sempat digambar (habis loading, atau rate di bawah FULL), mobil sekarang dapat refleksi abu-abu gelap, bukan cube langit siang bawaan game; plus cube dipaksa digambar di awal balapan biar langsung normal.

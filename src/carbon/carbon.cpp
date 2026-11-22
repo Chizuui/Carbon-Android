@@ -727,6 +727,58 @@ X86_FUNC(sub_00242FD0) {
     __imp__sub_00242FD0(ctx, base);
 }
 
+// Buy-car unlock (0xA19E0, FeVar op 0x1B59): when a car is bought the game clones the template slot
+// into car_db (sub_0009CD00, flags low16 = 0x0004) and stores the new handle at career+0x26230, but it
+// never writes the car's id into the unlock table [0x45680C]. The car-select listing filters on that
+// table (every 0x8A5xx lock check short-circuits on UNLOCK ALL 0x46D784), so a bought car is hidden with
+// the cheat off and reappears with it on (tester Test C). Fix at the source: after a successful add,
+// insert the new slot's type hash into the lock table and clear its state byte. Insert-then-clear
+// satisfies both conventions: existence-based checks (8A570/8A9C0/8AA30) return "available" when the entry
+// exists, and state-based checks (8A500/8A5E0) return "not locked" when [entry+4]==0.
+X86_EXTERN_FUNC(__imp__sub_000A19E0);
+X86_EXTERN_FUNC(sub_0008A4C0);
+X86_EXTERN_FUNC(sub_0008A530);
+
+static void LockTableOp(const X86Context& base_ctx, uint8_t* base, uint32_t table, uint32_t id, bool insert) {
+    X86Context sc = base_ctx;
+    sc.esp -= 16u;
+    if (!game::IsCommittedRange(sc.esp - 0x400u, 0x400u)) return;
+    sc.ecx = table;
+    auto push32 = [&](uint32_t v) {
+        sc.esp -= 4u;
+        kernel::W32(sc.esp, v);
+    };
+    push32(id);
+    push32(0u);  // dummy return-address slot (callee is ret 4)
+    if (insert) sub_0008A4C0(sc, base);
+    else sub_0008A530(sc, base);
+}
+
+X86_FUNC(sub_000A19E0) {
+    __imp__sub_000A19E0(ctx, base);
+    if ((ctx.eax & 0xFFu) == 0) return;  // original failed, nothing was added
+    uint32_t sys = game::IsCommittedRange(game::kCareerRoot, 4) ? kernel::R32(game::kCareerRoot) : 0;
+    uint32_t count = game::IsCommittedRange(sys + 0xD8u, 4) ? kernel::R32(sys + 0xD8u) : 0;
+    uint32_t list = (count > 0 && game::IsCommittedRange(sys + 0xD4u, 4)) ? kernel::R32(sys + 0xD4u) : 0;
+    uint32_t career = game::IsCommittedRange(list, 4) ? kernel::R32(list) : 0;
+    if (career < 0x10000u) return;
+    uint32_t car_db = career + 0x234u;
+    if (!game::IsCommittedRange(car_db, 0xC8u * 0x14u)) return;
+    if (!game::IsCommittedRange(career + 0x26230u, 4)) return;
+    uint32_t new_handle = kernel::R32(career + 0x26230u);
+    if (!new_handle || new_handle == 0xFFFFFFFFu) return;
+    uint32_t slot = FindCarSlotInDb(car_db, new_handle);
+    if (!slot) return;
+    uint32_t type = kernel::R32(slot + 8u);
+    if (!type) return;
+    if (!game::IsCommittedRange(0x45680Cu, 4)) return;
+    uint32_t lock_table = kernel::R32(0x45680Cu);
+    if (!lock_table) return;
+    LockTableOp(ctx, base, lock_table, type, true);
+    LockTableOp(ctx, base, lock_table, type, false);
+    LOGR("career: buy car handle %08X type %08X unlocked in lock table", new_handle, type);
+}
+
 // Guard the car-stat read (0x2881C0) against the garbage [esi+0x08] pointer left behind when the
 // career's car_db is empty (see the 0x242FD0 guard above): without a valid car the game builds a
 // car object whose +0x08 slot is 0x100000000, and [edx+0x1C] faults (SIGSEGV, addr 0x10000001c).

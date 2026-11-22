@@ -372,6 +372,18 @@ void FeFrame() {
         last_race_menu = 0;
     }
     g_package = menu ? pkg : 0;
+    // TEMPORARY OPTIONS instrumentation (feat/native-options-menu): log when an OPTIONS package
+    // opens/closes so the hook entries below can be correlated with the menu the tester sees.
+    {
+        uint32_t cur = g_package.load();
+        const char* cur_name = cur ? PackageName(cur) : nullptr;
+        bool is_opt = cur_name && (StartsWithNoCase(cur_name, "FeOptions") ||
+                                   StartsWithNoCase(cur_name, "FePauseOptionsMain"));
+        static bool was_opt = false;
+        if (is_opt && !was_opt) LOGR("opt: package %s opened", cur_name);
+        else if (!is_opt && was_opt) LOGR("opt: options package closed");
+        was_opt = is_opt;
+    }
     g_current_button = (menu && pkg && mem::IsCommitted(pkg + kCurrentButton + 3)) ? kernel::R32(pkg + kCurrentButton) : 0;
     g_press_start = menu && press_start;
     g_tap_anywhere = menu && pkg != 0 && !press_start;
@@ -1023,6 +1035,138 @@ void DumpPackages() {
     DumpOpenPackages(first);
     first = false;
     DumpRaceHud();
+}
+
+// TEMPORARY OPTIONS-menu instrumentation (feat/native-options-menu): log-only hooks on the game's
+// OPTIONS menu functions, so a tester session reveals the category path (FEDatabase), the tab ->
+// package mapping, and the row-creation points. NO behaviour change: every hook logs, then calls
+// the original. Remove before the native implementation lands. All lines share the "opt: " prefix.
+// Carbon's OPTIONS tabs are TEXT (AUDIO / GAMEPLAY / INTERFACE / CONTROLS / EA), not icons.
+
+// Current FEng package name for correlating log lines ("?" when none is active).
+const char* OptPkg() {
+    uint32_t p = g_package.load();
+    const char* name = p ? PackageName(p) : nullptr;
+    return name ? name : "?";
+}
+
+// Known FEng message hashes (verified in the RE report) as readable names.
+const char* OptMsgName(uint32_t h) {
+    switch (h) {
+        case 0x0C407210u: return "Accept";
+        case 0x9120409Eu: return "Left";
+        case 0xB5971BF1u: return "Right";
+        case 0x72619778u: return "Up";
+        case 0x911C0A4Bu: return "Down";
+        case 0xE1FDE1D1u: return "FadeDone";
+        case 0xE647B375u: return "ArrowPressed";
+        case 0x406415E3u: return "AcceptLeave";
+        default: return "?";
+    }
+}
+
+// 0x154CF0 (Setup, vtable slot 0xFC): thiscall, no stack args. Switches on [this+4] (mode);
+// one case creates the tab icons via 0x1475C0 with indices 0,3,4,5,(8,0x0A,0x0B). Called on
+// mode changes / menu open, so every call is logged.
+X86_EXTERN_FUNC(__imp__sub_00154CF0);
+X86_FUNC(sub_00154CF0) {
+    uint32_t self = ctx.ecx;
+    uint32_t mode = IsCommittedRange(self + 4, 4) ? kernel::R32(self + 4) : 0xFFFFFFFFu;
+    uint32_t f8 = IsCommittedRange(self + 8, 4) ? kernel::R32(self + 8) : 0xFFFFFFFFu;
+    LOGR("opt: 154CF0 setup this=%08X mode=%u [this+8]=%u pkg=%s", self, mode, f8, OptPkg());
+    __imp__sub_00154CF0(ctx, base);
+}
+
+// 0x1475C0 (tab/icon creation): thiscall, index = [esp+4] (0..10, jump table -> texture hash).
+// Logs the index being created; the per-index texture hashes are already known statically.
+X86_EXTERN_FUNC(__imp__sub_001475C0);
+X86_FUNC(sub_001475C0) {
+    uint32_t self = ctx.ecx;
+    uint32_t index = kernel::R32(ctx.esp + 4);
+    __imp__sub_001475C0(ctx, base);
+    LOGR("opt: 1475C0 icon this=%08X index=%u ret=%08X pkg=%s", self, index, ctx.eax, OptPkg());
+}
+
+// 0x13F0B0 (screen-pick, vtable slot 0x74): thiscall, index = [esp+4] (0..10 -> package via
+// 0x13D8F0), arg2 = [esp+8]; gated on [this+4] (mode). Called every tick while OPTIONS is open
+// (via 0x14C750), so only changes are logged; the post-call [this+0x10]/[this+0xA8] are what
+// 0x13D8F0 stores (picked index / 1).
+X86_EXTERN_FUNC(__imp__sub_0013F0B0);
+X86_FUNC(sub_0013F0B0) {
+    uint32_t self = ctx.ecx;
+    uint32_t index = kernel::R32(ctx.esp + 4);
+    uint32_t arg2 = kernel::R32(ctx.esp + 8);
+    uint32_t mode = IsCommittedRange(self + 4, 4) ? kernel::R32(self + 4) : 0xFFFFFFFFu;
+    static uint32_t last_mode = 0xFFFFFFFFu, last_index = 0xFFFFFFFFu, last_arg2 = 0xFFFFFFFFu;
+    bool changed = (mode != last_mode || index != last_index || arg2 != last_arg2);
+    last_mode = mode;
+    last_index = index;
+    last_arg2 = arg2;
+    __imp__sub_0013F0B0(ctx, base);
+    if (changed) {
+        uint32_t stored_idx = IsCommittedRange(self + 0x10, 4) ? kernel::R32(self + 0x10) : 0xFFFFFFFFu;
+        uint32_t stored_1 = IsCommittedRange(self + 0xA8, 4) ? kernel::R32(self + 0xA8) : 0xFFFFFFFFu;
+        LOGR("opt: 13F0B0 pick this=%08X mode=%u index=%u arg2=%u -> [this+10]=%u [this+A8]=%u ret=%08X pkg=%s",
+             self, mode, index, arg2, stored_idx, stored_1, ctx.eax, OptPkg());
+    }
+}
+
+// 0x14C750 (screen-pick caller, per-frame tick): no args. Computes the picked index from the
+// floats [0x46D2C0] * [0x3A7758] (truncated to int) and calls vtable slot 0x74 on [0x46A8E4].
+// Only changes are logged, otherwise this would spam every frame.
+X86_EXTERN_FUNC(__imp__sub_0014C750);
+X86_FUNC(sub_0014C750) {
+    uint32_t obj = IsCommittedRange(0x46A8E4u, 4) ? kernel::R32(0x46A8E4u) : 0;
+    float f1 = 0.0f, f2 = 0.0f;
+    if (IsCommittedRange(0x46D2C0u, 4)) {
+        uint32_t b = kernel::R32(0x46D2C0u);
+        std::memcpy(&f1, &b, 4);
+    }
+    if (IsCommittedRange(0x3A7758u, 4)) {
+        uint32_t b = kernel::R32(0x3A7758u);
+        std::memcpy(&f2, &b, 4);
+    }
+    int idx = (int)(f1 * f2);
+    static uint32_t last_obj = 0xFFFFFFFFu;
+    static int last_idx = -1;
+    bool changed = (obj != last_obj || idx != last_idx);
+    last_obj = obj;
+    last_idx = idx;
+    __imp__sub_0014C750(ctx, base);
+    if (changed)
+        LOGR("opt: 14C750 tick obj46A8E4=%08X f46D2C0=%.3f f3A7758=%.3f idx=%d pkg=%s", obj, (double)f1,
+             (double)f2, idx, OptPkg());
+}
+
+// 0x156B00 (options screen Notification, vtable slot 0x04 of 0x3B38F0): thiscall, message hash =
+// [esp+4], args = [esp+8]/[esp+0xC]/[esp+0x10]. Left/Right change the current row's value,
+// Up/Down move the selection via 0x154870. [this+0xE0] is the early-out flag, [this+0xD8] the
+// current widget, [this+0x0C] the screen's index field.
+X86_EXTERN_FUNC(__imp__sub_00156B00);
+X86_FUNC(sub_00156B00) {
+    uint32_t self = ctx.ecx;
+    uint32_t msg = kernel::R32(ctx.esp + 4);
+    uint32_t a1 = kernel::R32(ctx.esp + 8);
+    uint32_t a2 = kernel::R32(ctx.esp + 0xC);
+    uint32_t a3 = kernel::R32(ctx.esp + 0x10);
+    uint32_t flag = IsCommittedRange(self + 0xE0, 1) ? kernel::G<uint8_t>(self + 0xE0) : 0xFFu;
+    uint32_t widget = IsCommittedRange(self + 0xD8, 4) ? kernel::R32(self + 0xD8) : 0;
+    uint32_t c = IsCommittedRange(self + 0x0C, 4) ? kernel::R32(self + 0x0C) : 0xFFFFFFFFu;
+    LOGR("opt: 156B00 notify this=%08X msg=%08X(%s) a1=%08X a2=%08X a3=%08X flagE0=%u widgetD8=%08X [this+C]=%08X pkg=%s",
+         self, msg, OptMsgName(msg), a1, a2, a3, flag, widget, c, OptPkg());
+    __imp__sub_00156B00(ctx, base);
+}
+
+// 0x154870 (move selection, called from 0x156B00's Up/Down path): thiscall, message hash =
+// [esp+4], args = [esp+8]/[esp+0xC]/[esp+0x10]. Direct view of selection movement.
+X86_EXTERN_FUNC(__imp__sub_00154870);
+X86_FUNC(sub_00154870) {
+    uint32_t self = ctx.ecx;
+    uint32_t msg = kernel::R32(ctx.esp + 4);
+    LOGR("opt: 154870 movesel this=%08X msg=%08X(%s) a1=%08X a2=%08X a3=%08X pkg=%s", self, msg,
+         OptMsgName(msg), kernel::R32(ctx.esp + 8), kernel::R32(ctx.esp + 0xC),
+         kernel::R32(ctx.esp + 0x10), OptPkg());
+    __imp__sub_00154870(ctx, base);
 }
 
 }  // namespace game

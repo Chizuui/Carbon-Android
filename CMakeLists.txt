@@ -88,6 +88,9 @@ list(FILTER RUNTIME_SOURCES EXCLUDE REGEX
 set(XBE_GAME_DIR game CACHE STRING "the per-game hook directory under src")
 # and the HUD layout when the game folder has one (Most Wanted's stays its own, unbuilt: its FEng is not hooked)
 file(GLOB GAME_HOST_SOURCES CONFIGURE_DEPENDS ${GAME}/d3d/*.cpp ${GAME}/sound/*.cpp ${GAME}/common/*.cpp ${GAME}/${XBE_GAME_DIR}/*.cpp)
+# the Mods Loader's game-side files live in src/game (NOT globbed: the rest of src/game is dead
+# Most Wanted code with wrong addresses, so only these two are built for Carbon)
+list(APPEND GAME_HOST_SOURCES ${GAME}/game/car_mods.cpp ${GAME}/game/texture_packs.cpp)
 if(EXISTS ${GAME}/${XBE_GAME_DIR}/dump.h)
     list(APPEND GAME_HOST_SOURCES ${GAME}/${XBE_GAME_DIR}/hud_layout.cpp)
 endif()

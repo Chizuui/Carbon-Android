@@ -21,6 +21,12 @@ uint32_t HostThunk(X86Func* fn);
 
 namespace game {
 
+// Add-on cars (src/game/car_mods.cpp): the per-present frame work, the name-texture answer for
+// GetTextureInfo, and the mod car names OwnString consults.
+void ModCarsFrame(X86Context& ctx, uint8_t* base);
+uint32_t ModCarTexture(X86Context& ctx, uint32_t hash);
+const char* ModOwnString(uint32_t hash);
+
 // Carbon's widescreen:
 // 0x45D294: byte flag set when widescreen is enabled at boot (mov al, [0x45D294]; and al, 1; ret at 0x22C130)
 // 0x3F98E0: float width transform (853.0f), read by front-end and HUD transform (0x10F094, 0x111749)
@@ -259,6 +265,7 @@ uint32_t GuestText(const char* text) {
 const char* OwnString(uint32_t hash) {
     for (const Prompt& p : kPrompts)
         if (p.hash == hash) return p.text;
+    if (const char* mod = ModOwnString(hash)) return mod;  // add-on car names (car_mods.cpp)
     return nullptr;
 }
 
@@ -706,6 +713,8 @@ static uint32_t PickFallbackCarHandle(uint32_t car_db, uint32_t h1b60) {
 }
 
 X86_FUNC(sub_00242FD0) {
+    // Add-on cars first: removal/add happen before this guard repairs 0x1B58, so it sees the post-mod list.
+    game::ModCarsFrame(ctx, base);
     uint32_t sys = game::IsCommittedRange(game::kCareerRoot, 4) ? kernel::R32(game::kCareerRoot) : 0;
     uint32_t count = game::IsCommittedRange(sys + 0xD8u, 4) ? kernel::R32(sys + 0xD8u) : 0;
     uint32_t list = (count > 0 && game::IsCommittedRange(sys + 0xD4u, 4)) ? kernel::R32(sys + 0xD4u) : 0;
@@ -758,6 +767,19 @@ X86_FUNC(sub_00242FD0) {
         }
     }
     __imp__sub_00242FD0(ctx, base);
+}
+
+// GetTextureInfo (0x102310): the car-select name texture for an add-on car is a TextureInfo no front end pack
+// has; car_mods.cpp answers its hash, else the game's own lookup runs.
+X86_EXTERN_FUNC(__imp__sub_00102310);
+X86_FUNC(sub_00102310) {
+    uint32_t hash = kernel::R32(ctx.esp + 4);
+    if (uint32_t info = game::ModCarTexture(ctx, hash)) {
+        ctx.eax = info;
+        ctx.esp += 4;  // cdecl: the caller cleans the three arguments
+        return;
+    }
+    __imp__sub_00102310(ctx, base);
 }
 
 // Buy-car unlock (0xA19E0, FeVar op 0x1B59): when a car is bought the game clones the template slot

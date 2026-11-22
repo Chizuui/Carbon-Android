@@ -1,5 +1,6 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Crash di world map dibenerin — kalau database mobil career tidak punya satu pun mobil yang valid (tidak ada mobil pengganti sama sekali), game sebelumnya tetap maksa lanjut dan crash pas nyari mobilnya; sekarang proses load mobilnya dilewatin aja biar tidak crash, dan log-nya nyatet kenapa.
 - Mobil tidak putih lagi pas PANTULAN MOBIL di OFF — pas OFF, muka cube refleksi tidak pernah digambar, jadi port tidak kenal lagi cube-nya dari target yang ada dan mobil jatuh ke langit siang bawaan game; sekarang port mengenali cube-nya dari objek teksturnya sendiri (live cube dan STATICENVMAP), jadi mobil dapat refleksi abu-abu gelap.
 - Mobil tidak putih lagi pas PANTULAN MOBIL bukan FULL — kalau cube refleksi belum sempat digambar (habis loading, atau rate di bawah FULL), mobil sekarang dapat refleksi abu-abu gelap, bukan cube langit siang bawaan game; plus cube dipaksa digambar di awal balapan biar langsung normal.
 - Vinyl di editor akhirnya bisa digeser — layarnya ternyata baca left stick, bukan sentuhan, jadi drag di vinyl sekarang diteruskan ke stick (D-pad atas/bawah juga gerak vertikal), dan swipe di layar itu tidak terbalik lagi.

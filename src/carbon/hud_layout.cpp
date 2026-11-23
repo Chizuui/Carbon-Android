@@ -132,39 +132,56 @@ struct RoadRect {
     int32_t last_dx = 0, last_dy = 0;
     bool seen = false;
 };
+std::unordered_map<uint32_t, RoadRect> g_road_rects;  // by the object's data pointer
+uint32_t g_minimap_obj = 0;  // Hud_Minimap game object, cached from the 158520/165C00 hooks (ctx.ecx)
+int g_last_logged_rects = -1;
+
+void ShiftOneRect(uint32_t data, int32_t sdx, int32_t sdy, int& shifted) {
+    if (!data || !mem::IsCommitted(data + 7)) return;
+    int32_t cur0 = static_cast<int32_t>(kernel::R32(data));
+    int32_t cur1 = static_cast<int32_t>(kernel::R32(data + 4));
+    RoadRect& r = g_road_rects[data];
+    if (!r.seen) {
+        r.orig0 = cur0; r.orig1 = cur1; r.seen = true;
+    } else if (cur0 != r.orig0 + r.last_dx || cur1 != r.orig1 + r.last_dy) {
+        // The game rewrote the rect (new road network) — take the new values as the original.
+        r.orig0 = cur0; r.orig1 = cur1; r.last_dx = 0; r.last_dy = 0;
+    }
+    if (sdx != r.last_dx || sdy != r.last_dy) {
+        kernel::W32(data, static_cast<uint32_t>(r.orig0 + sdx));
+        kernel::W32(data + 4, static_cast<uint32_t>(r.orig1 + sdy));
+        r.last_dx = sdx; r.last_dy = sdy;
+    }
+    shifted++;
+}
+
 void ShiftRoadRects() {
     float dxf = g_hud_x[kHudMinimap].load(std::memory_order_relaxed);
     float dyf = g_hud_y[kHudMinimap].load(std::memory_order_relaxed);
     int32_t sdx = static_cast<int32_t>(dxf + (dxf >= 0.0f ? 0.5f : -0.5f));
     int32_t sdy = static_cast<int32_t>(dyf + (dyf >= 0.0f ? 0.5f : -0.5f));
-    static std::unordered_map<uint32_t, RoadRect> rects;
-    static int last_logged = -1;
     constexpr uint32_t kRoadArray = 0x46AB28;
     int shifted = 0;
     for (int i = 0; i < 30; i++) {
         uint32_t obj = Peek(kRoadArray + uint32_t(i) * 0x14u);
         if (!obj) continue;
-        uint32_t data = Peek(obj + kObjectData);
-        if (!data || !mem::IsCommitted(data + 7)) continue;
-        int32_t cur0 = static_cast<int32_t>(kernel::R32(data));
-        int32_t cur1 = static_cast<int32_t>(kernel::R32(data + 4));
-        RoadRect& r = rects[data];
-        if (!r.seen) {
-            r.orig0 = cur0; r.orig1 = cur1; r.seen = true;
-        } else if (cur0 != r.orig0 + r.last_dx || cur1 != r.orig1 + r.last_dy) {
-            // The game rewrote the rect (new road network) — take the new values as the original.
-            r.orig0 = cur0; r.orig1 = cur1; r.last_dx = 0; r.last_dy = 0;
-        }
-        if (sdx != r.last_dx || sdy != r.last_dy) {
-            kernel::W32(data, static_cast<uint32_t>(r.orig0 + sdx));
-            kernel::W32(data + 4, static_cast<uint32_t>(r.orig1 + sdy));
-            r.last_dx = sdx; r.last_dy = sdy;
-        }
-        shifted++;
+        ShiftOneRect(Peek(obj + kObjectData), sdx, sdy, shifted);
     }
-    if (shifted != last_logged) {
+    // The POI / GPS-route lines (race markers, Car Lot, Safe House, the white route line) are drawn by
+    // sub_00158AE0 from a SECOND rect source the road-array shift does not cover: the FEng object at
+    // minimap+0x30, whose rect sub_0011AB70 copies into [ebp-0x60] (guest 0x158B23) for the draws in the
+    // 0x2DC2FF / 0x30B0D colours. That object is not in the 0x46AB28 array and is not reached by the
+    // package walk, so when the minimap is dragged its lines stay at the original origin (top-left)
+    // while the circle moves — the POIs/route appear detached from the minimap. Shift its rect the
+    // same way, through the same tracking map (so if it ever coincides with a road object it is only
+    // shifted once). The minimap game object is cached from the 158520/165C00 hooks (ctx.ecx).
+    if (g_minimap_obj && mem::IsCommitted(g_minimap_obj + 0x33u)) {
+        uint32_t rect_obj = kernel::R32(g_minimap_obj + 0x30u);
+        if (rect_obj) ShiftOneRect(Peek(rect_obj + kObjectData), sdx, sdy, shifted);
+    }
+    if (shifted != g_last_logged_rects) {
         LOGR("minimap: road rects shifted %d (dx=%d dy=%d)", shifted, sdx, sdy);
-        last_logged = shifted;
+        g_last_logged_rects = shifted;
     }
 }
 
@@ -318,6 +335,7 @@ X86_EXTERN_FUNC(__imp__sub_00158520);
 X86_FUNC(sub_00158520) {
     static int n_158520 = 0;
     if ((++n_158520 % 600) == 1) LOGR("minimap: sub_00158520 entry #%d", n_158520);
+    game::g_minimap_obj = ctx.ecx;  // cache for ShiftRoadRects' minimap+0x30 rect object
     game::MinimapOriginScope scope(ctx.ecx);
     game::NoRouteRoadScope route(ctx, base);
     __imp__sub_00158520(ctx, base);
@@ -350,6 +368,7 @@ X86_FUNC(sub_0015870A) {
 
 X86_EXTERN_FUNC(__imp__sub_00165C00);
 X86_FUNC(sub_00165C00) {
+    game::g_minimap_obj = ctx.ecx;  // cache for ShiftRoadRects' minimap+0x30 rect object
     game::MinimapOriginScope scope(ctx.ecx);
     __imp__sub_00165C00(ctx, base);
 }

@@ -842,6 +842,51 @@ X86_FUNC(sub_000624E0) {
     __imp__sub_000624E0(ctx, base);
 }
 
+// Dynamic-array resize/insert (0x1728F0): a container with [this+0x60]=element count and
+// [this+0x78]=data pointer (12-byte elements). It allocates a new buffer (sub_0016D530), then copies
+// count*12 bytes from the old data with rep movsd/movsb (a host memcpy). Starting a race from the
+// world map (tester log carbon-85c65c05.log, session 15:02:31, on d90ec12 — the 624E0 guard fired
+// 4x and the race got PAST it) crashes right after "fepkg: race resume": SIGSEGV in libc
+// (memcpy), fault addr host 0x10b5b259c = guest 0x0B5B259C, return address sub_001728F0+0x63c — the
+// old data pointer [this+0x78] is wild (a stale/corrupt container from the degenerate save), so
+// the host memcpy faults. Guard: validate this (0x7C bytes, covers +0x60 and +0x78) and, when the
+// count is sane, the whole source range [data, data+count*12) before calling the original; if
+// anything is wild, skip the resize (return the arg, as the original does) instead of crashing.
+// The array just doesn't grow — better than a force close on race start. ret 0x04: the callee
+// pops the return address + 1 stack arg (esp += 8).
+X86_EXTERN_FUNC(__imp__sub_001728F0);
+X86_FUNC(sub_001728F0) {
+    // Args: this in ecx, [esp+4]=index/count. On entry ctx.esp is the ret addr.
+    uint32_t self = ctx.ecx;
+    uint32_t arg = game::IsCommittedRange(ctx.esp + 4, 4) ? kernel::R32(ctx.esp + 4) : 0;
+    bool bad = false;
+    if (!self || !game::IsCommittedRange(self, 0x7C)) {
+        bad = true;
+    } else {
+        uint32_t count = kernel::R32(self + 0x60);
+        uint32_t data = kernel::R32(self + 0x78);
+        // Sanity cap: the array holds at most a few hundred 12-byte entries; a huge count is
+        // corrupt (and count*12 would overflow). The copy reads count*12 bytes from data.
+        if (count > 10000) {
+            bad = true;
+        } else if (count && (!data || !game::IsCommittedRange(data, count * 12u))) {
+            bad = true;
+        }
+        if (arg > 100000) bad = true;  // the index/count arg must be sane too
+    }
+    if (bad) {
+        static int logged = 0;
+        if (logged < 4) {
+            LOGR("race: 1728F0 guard: bad container/data (self=%08X arg=%u), skipping resize", self, arg);
+            logged++;
+        }
+        ctx.eax = arg;  // the original returns the arg
+        ctx.esp += 8;  // ret 0x04 (return address + 1 stack arg)
+        return;
+    }
+    __imp__sub_001728F0(ctx, base);
+}
+
 // Race-mode notify (0x240DE0): during the race load it walks the mode objects at [0x46EC64] and calls
 // a virtual method on each; for the degenerate career (no valid car) one of those calls returns NULL
 // and the game dereferenced [NULL+0x04] at 0x240E88 (tester log carbon-prev-349c0b48.log). The old

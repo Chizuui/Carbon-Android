@@ -1,5 +1,7 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Force close pas mulai balapan dari world map masih ada tapi pindah tempat (habis guard 624E0 jalan, crash-nya pindah ke fungsi resize array yang copy data pakai memcpy dari pointer yang ngaco) dibenerin — container sama data array-nya dicek dulu sebelum di-copy; kalau ada yang ngaco, resize-nya dilewatin aja daripada force close.
+
 - Audit semua pointer/alamat yang dipakai kode Carbon selesai (40 alamat baru terverifikasi, 2 salah ketik/komentar, 1 hook mati dihapus): pointer matriks widescreen sekarang dicek dulu sebelum dipakai tiap frame, rect jalan minimap dicek 16 byte penuh sebelum ditulis, guard 624E0 sekarang validasi node sampai callback free-nya, dan objek minimap yang di-cache dicek dulu sebelum dibaca. Jadi crash dari pointer liar di jalur-jalur itu nggak bakal kejadian lagi.
 
 - Force close pas mulai balapan dari world map (Jump to Event) dibenerin — pas load balapan, game nyari blok memori buat pointer yang alamatnya ngaco, jadi langsung crash. Sekarang pointer sama daftar blok memorinya dicek dulu sebelum dijalanin; kalau ada yang ngaco, dilewatin aja (nggak di-free) daripada force close.

@@ -244,18 +244,26 @@ void WriteFeVar(const X86Context& base_ctx, uint8_t* base, uint32_t id, uint32_t
     sub_0007DD50(sc, base);
 }
 
-// Free roam / pursuit have no race route, so sub_00158520's gate exits early (the 0xBCD FeVar holds
-// the "no route" sentinel 0x99C27E3B) and no road data is built, leaving [esi+0x164]==0 so 158AE0
-// draws nothing — the empty minimap. The rebuild itself does not need a route: it walks the world
-// road graph (0x4B612C/0x4B6170/0x4B6174, never reads the route id in the loop) and only stores the
-// route id into [esi+0x15C]. So when there is no route, lend the rebuild a dummy route id for the
-// call only: set the 0xBCD FeVar to a non-sentinel value, call the original (which builds the roads),
-// restore the sentinel. The dummy is a constant, so the rebuild behaves exactly like a race with a
-// constant route id — the capacity check, not a route change, drives updates as the player drives.
-// The FeVar is restored before the hook returns, so no other code ever sees the dummy. Only activates
-// when the road-object array is populated (the world is loaded and there are roads to draw); otherwise
-// the map stays empty as before. If the 0xBC3 gate (==0x0C) also fires, the bypass silently does
-// nothing (map stays empty, no crash). RE 2026-11-23.
+// Free roam / pursuit have no race route, so sub_00158520's gate exits early and no road data is built,
+// leaving [esi+0x164]==0 so 158AE0 draws nothing — the empty minimap. The rebuild itself does not need
+// a route: it walks the world road graph (0x4B612C/0x4B6170/0x4B6174, never reads the route id in the
+// loop) and only stores the route id into [esi+0x15C]. So when there is no route, lend the rebuild a
+// dummy route id for the call only: set the 0xBCD FeVar to a non-sentinel value, call the original
+// (which builds the roads), restore the sentinel. The dummy is a constant, so the rebuild behaves
+// exactly like a race with a constant route id — the capacity check, not a route change, drives updates
+// as the player drives. The FeVar is restored before the hook returns, so no other code ever sees the
+// dummy. Only activates when the road-object array is populated (the world is loaded and there are
+// roads to draw); otherwise the map stays empty as before. If the 0xBC3 gate (==0x0C) also fires, the
+// bypass silently does nothing (map stays empty, no crash). RE 2026-11-23.
+// CORRECTION 2026-11-23: the bypass never fired (0 "lending dummy route id" lines in every log) because
+// the gate does NOT exit via the sentinel in free roam. The 0xBCD getter (sub_0007DD00) returns FALSE
+// (xor al,al at 0x7DD3B) when the FeVar's hash bucket is NULL — i.e. the race-route FeVar does not exist
+// at all in free roam — so the gate exits via the getter-false exit, and ReadFeVar returns the default 0,
+// which the old `cur != sentinel` check treated as "real route, leave alone". Fire also when cur==0
+// (no FeVar / no route). Caveat: the setter (sub_0007DD50) also returns false on a NULL bucket and does
+// NOT create a missing FeVar, so if the FeVar truly does not exist the write fails silently and the
+// bypass is a no-op — but if the FeVar exists and is 0, the write succeeds and the gate passes. The
+// diagnostic below logs the actual FeVar value so the next log proves which case it is.
 struct NoRouteRoadScope {
     X86Context ctx;
     uint8_t* base = nullptr;
@@ -266,7 +274,14 @@ struct NoRouteRoadScope {
 
     explicit NoRouteRoadScope(const X86Context& c, uint8_t* b) : ctx(c), base(b) {
         uint32_t cur = ReadFeVar(ctx, base, kRouteVar, 0u);
-        if (cur != kNoRouteSentinel) return;  // real route (or unreadable): leave alone
+        // Diagnostic: log the actual 0xBCD value the first few times 158520 runs, so the next log
+        // proves whether free roam has the sentinel, no FeVar (0), or a real route id.
+        static int probed = 0;
+        if (probed < 4) {
+            LOGR("minimap: 0xBCD FeVar = %08X", cur);
+            probed++;
+        }
+        if (cur != kNoRouteSentinel && cur != 0u) return;  // real route: leave alone
         if (!RoadArrayPopulated()) return;    // no road network loaded: nothing to draw
         WriteFeVar(ctx, base, kRouteVar, kDummyRoute);
         active = true;

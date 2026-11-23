@@ -789,6 +789,54 @@ X86_FUNC(sub_00172400) {
     __imp__sub_00172400(ctx, base);
 }
 
+// Heap-block lookup/free (0x624E0): takes a pointer, finds which of the 16 heap regions
+// (descriptors at 0x4507DC..0x4508CC, 0x10 apart; each holds a node with [node+0x08]=start,
+// [node+0x0C]=size) and which of the 16 table entries (array at 0x4508D8, each with
+// [entry+0x14]=start, [entry+0x18]=size) contains it, then calls the block's free callback at
+// [node+0x14]. Starting a race from the world map ("Jump to Event", tester log
+// carbon-f9c9419f.log, session 14:25:46, on 5310038) crashes right after "fepkg: race resume":
+// SIGSEGV at 624E0+0x294, fault addr 0x1fffffff5 — the function is called with a wild pointer
+// (arg 0x200000001, so the not-found path reads its header byte at [arg-0x0C]=0x1fffffff5),
+// or a region/table entry is wild. Guard: validate the arg's header bytes, every region-list
+// node, and every table entry with IsCommitted checks before calling the original; if anything
+// is wild, skip the free (return 0) instead of crashing. The block just leaks — better than a
+// force close on race start. Plain ret: the caller cleans up the 1 stack arg.
+X86_EXTERN_FUNC(__imp__sub_000624E0);
+X86_FUNC(sub_000624E0) {
+    // Args (cdecl): [esp+4]=pointer. On entry ctx.esp is the ret addr.
+    uint32_t ptr = game::IsCommittedRange(ctx.esp + 4, 4) ? kernel::R32(ctx.esp + 4) : 0;
+    bool bad = false;
+    // The function reads the block header just before the pointer ([ptr-0x0C] byte,
+    // [ptr-0x0B] flag); a wild pointer faults there on the not-found path.
+    if (!ptr || !game::IsCommittedRange(ptr - 0x14, 0x14)) {
+        bad = true;
+    } else {
+        // 16 region-list descriptors at 0x4507DC..0x4508CC (0x10 apart); each [desc] is a node.
+        for (uint32_t d = 0x4507DC; d < 0x4508DC && !bad; d += 0x10) {
+            if (!game::IsCommittedRange(d, 4)) { bad = true; break; }
+            uint32_t node = kernel::R32(d);
+            if (node && !game::IsCommittedRange(node, 0x10)) bad = true;
+        }
+        // 16 table entries at 0x4508D8..0x450918 (4 apart); each is a region descriptor.
+        for (uint32_t t = 0x4508D8; t < 0x450918 && !bad; t += 4) {
+            if (!game::IsCommittedRange(t, 4)) { bad = true; break; }
+            uint32_t entry = kernel::R32(t);
+            if (entry && !game::IsCommittedRange(entry, 0x1C)) bad = true;
+        }
+    }
+    if (bad) {
+        static int logged = 0;
+        if (logged < 4) {
+            LOGR("race: 624E0 guard: bad pointer/region (ptr=%08X), skipping free", ptr);
+            logged++;
+        }
+        ctx.eax = 0;
+        ctx.esp += 4;  // plain ret (caller cleans up the 1 arg)
+        return;
+    }
+    __imp__sub_000624E0(ctx, base);
+}
+
 // Race-mode notify (0x240DE0): during the race load it walks the mode objects at [0x46EC64] and calls
 // a virtual method on each; for the degenerate career (no valid car) one of those calls returns NULL
 // and the game dereferenced [NULL+0x04] at 0x240E88 (tester log carbon-prev-349c0b48.log). The old

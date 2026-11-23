@@ -1,5 +1,7 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Force close pas mulai balapan dari world map (Jump to Event) dibenerin — pas load balapan, game nyari blok memori buat pointer yang alamatnya ngaco, jadi langsung crash. Sekarang pointer sama daftar blok memorinya dicek dulu sebelum dijalanin; kalau ada yang ngaco, dilewatin aja (nggak di-free) daripada force close.
+
 - Force close pas buka world map / pas bersih-bersih objek (0x173768, 0x175538) dibenerin — game ganti-ganti fungsi destructor di vtable yang sama tiap kali bersih-bersih objek, dan beberapa targetnya belum pernah di-compile ulang, jadi crash satu-satu. Sekarang kalau targetnya nggak dikenal di jalur bersih-bersih itu, dilewatin aja (nggak dijalanin) daripada force close, jadi crash sejenis nggak bakal muncul lagi.
 
 - Force close pas buka world map dari free roam dibenerin — pas buka map, game jalanin fungsi layout objek yang jalanin daftar anak objek, dan daftarnya ada node yang alamatnya ngaco (sisa state free roam), jadi langsung crash. Sekarang daftarnya dicek dulu sebelum dijalanin; kalau ada yang ngaco, objeknya dilewatin aja (nggak di-layout) daripada force close.

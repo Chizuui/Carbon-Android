@@ -130,17 +130,22 @@ bool HudPackage(uint32_t p) {
 // 73f7226 MinimapRectScope (shift data+0x1C/+0x20 in the 158AE0 hook) is ineffective — the rect is
 // independent of the position and the scope restores before render — so it was removed.
 //
-// RECT LAYOUT (pinned 2026-11-23 from the video evidence): the rect is FOUR position-like integers,
-// not (x,y,w,h). sub_0016D640 compares all four dwords symmetrically (±1 tolerance) and sub_00170E10
-// sets/adds all four symmetrically into the draw-list entry — so all four are coordinates (two points:
-// (x1,y1,x2,y2) line endpoints, or (l,t,r,b)). Shifting only dwords 0,1 (as 509814c did) moves one end
-// of each line but not the other, distorting/inverting the rects so the FEng draw culls them — the white
-// street grid drew NOWHERE on every tester device (all had a non-zero drag offset), in free roam AND in
-// races (videos 13:04:26, 13:05:48, 13:07:43: only the yellow route/segments show, never a white line),
-// while the user's own phone at the default offset (dx=0 dy=0, shift a no-op) was fine. So ALL FOUR
-// dwords shift: dwords 0,2 by sdx and dwords 1,3 by sdy.
+// RECT LAYOUT — STILL UNPINNED, and the 81fb86c shift-all-four experiment PROVED shifting dwords 2,3
+// is wrong: on 81fb86c half the yellow road network vanished (screenshots + logs 2026-11-23 13:34-13:37,
+// tester dx=29 dy=-207 and dx=-5 dy=-268), while 07fddb5 (shift dwords 0,1 only) showed the full
+// network. The first-sight diagnostic logged orig=(65,255,155,255) for the first 4 rects — all
+// identical, so those are template/placeholder values, not the real per-road rects (d1==d3==255 fits
+// a horizontal line (x1,y1,x2,y2) OR (x,y,w,h) with h=255; (l,t,r,b) is ruled out — height would be 0).
+// So this reverts to shifting dwords 0,1 only (the 07fddb5 behaviour, full yellow network). The white
+// grid itself still never draws under either shift, so its cause is elsewhere (the road objects may
+// draw yellow, not white, or may not draw at all) — the rewrite diagnostic below logs the REAL rect
+// values when the game sets them, which will pin the layout. NOTE on the 164-clearing (8d4fdfd): it
+// never fires in any log, because the clearing code reads ctx.ecx AFTER the original 158520 returns
+// and 158520 clobbers ecx — it must use game::g_minimap_obj instead. Do NOT fix that yet: until the
+// white grid is proven to draw, firing the clearing would leave free roam with an EMPTY map (yellow
+// suppressed, no white grid) — worse than yellow roads.
 struct RoadRect {
-    int32_t orig0 = 0, orig1 = 0, orig2 = 0, orig3 = 0;
+    int32_t orig0 = 0, orig1 = 0;
     int32_t last_dx = 0, last_dy = 0;
     bool seen = false;
 };
@@ -148,33 +153,39 @@ std::unordered_map<uint32_t, RoadRect> g_road_rects;  // by the object's data po
 uint32_t g_minimap_obj = 0;  // Hud_Minimap game object, cached from the 158520/165C00 hooks (ctx.ecx)
 int g_last_logged_rects = -1;
 int g_rect_diag_logged = 0;  // rate-limit for the rect-values diagnostic below
+int g_rect_rewrite_logged = 0;  // rate-limit for the rewrite (real values) diagnostic below
 
 void ShiftOneRect(uint32_t data, int32_t sdx, int32_t sdy, int& shifted) {
-    if (!data || !mem::IsCommitted(data + 15)) return;
+    if (!data || !mem::IsCommitted(data + 7)) return;
     int32_t cur0 = static_cast<int32_t>(kernel::R32(data));
     int32_t cur1 = static_cast<int32_t>(kernel::R32(data + 4));
-    int32_t cur2 = static_cast<int32_t>(kernel::R32(data + 8));
-    int32_t cur3 = static_cast<int32_t>(kernel::R32(data + 12));
     RoadRect& r = g_road_rects[data];
     if (!r.seen) {
-        r.orig0 = cur0; r.orig1 = cur1; r.orig2 = cur2; r.orig3 = cur3; r.seen = true;
-        // Diagnostic: log the first road object's original rect + shift so the layout/scale can be
-        // confirmed from the log (first 4 ShiftRoadRects runs). If d2>d0 and d3>d1 it is (l,t,r,b) or
-        // (x1,y1,x2,y2); if d2,d3 are small while d0,d1 are large it is (x,y,w,h) and this fix is wrong.
+        r.orig0 = cur0; r.orig1 = cur1; r.seen = true;
+        // Diagnostic: log the first road object's original rect + shift (first 4). The first-sight
+        // values are template/placeholder (all identical so far), so the rewrite log below is the
+        // one that pins the layout: if the real d2>d0 and d3>d1 it is (l,t,r,b)/(x1,y1,x2,y2); if
+        // the real d2,d3 are small while d0,d1 are large it is (x,y,w,h).
         if (g_rect_diag_logged < 4) {
-            LOGR("minimap: road rect orig=(%d,%d,%d,%d) shift=(%d,%d)", r.orig0, r.orig1, r.orig2, r.orig3, sdx, sdy);
+            int32_t cur2 = mem::IsCommitted(data + 15) ? static_cast<int32_t>(kernel::R32(data + 8)) : 0;
+            int32_t cur3 = mem::IsCommitted(data + 15) ? static_cast<int32_t>(kernel::R32(data + 12)) : 0;
+            LOGR("minimap: road rect orig=(%d,%d,%d,%d) shift=(%d,%d)", r.orig0, r.orig1, cur2, cur3, sdx, sdy);
             g_rect_diag_logged++;
         }
-    } else if (cur0 != r.orig0 + r.last_dx || cur1 != r.orig1 + r.last_dy ||
-               cur2 != r.orig2 + r.last_dx || cur3 != r.orig3 + r.last_dy) {
-        // The game rewrote the rect (new road network) — take the new values as the original.
-        r.orig0 = cur0; r.orig1 = cur1; r.orig2 = cur2; r.orig3 = cur3; r.last_dx = 0; r.last_dy = 0;
+    } else if (cur0 != r.orig0 + r.last_dx || cur1 != r.orig1 + r.last_dy) {
+        // The game rewrote the rect (new road network / real values replacing the template) — take
+        // the new values as the original, and log the real rect so the layout can be pinned.
+        if (g_rect_rewrite_logged < 4) {
+            int32_t cur2 = mem::IsCommitted(data + 15) ? static_cast<int32_t>(kernel::R32(data + 8)) : 0;
+            int32_t cur3 = mem::IsCommitted(data + 15) ? static_cast<int32_t>(kernel::R32(data + 12)) : 0;
+            LOGR("minimap: road rect rewritten to=(%d,%d,%d,%d) shift=(%d,%d)", cur0, cur1, cur2, cur3, sdx, sdy);
+            g_rect_rewrite_logged++;
+        }
+        r.orig0 = cur0; r.orig1 = cur1; r.last_dx = 0; r.last_dy = 0;
     }
     if (sdx != r.last_dx || sdy != r.last_dy) {
         kernel::W32(data, static_cast<uint32_t>(r.orig0 + sdx));
         kernel::W32(data + 4, static_cast<uint32_t>(r.orig1 + sdy));
-        kernel::W32(data + 8, static_cast<uint32_t>(r.orig2 + sdx));
-        kernel::W32(data + 12, static_cast<uint32_t>(r.orig3 + sdy));
         r.last_dx = sdx; r.last_dy = sdy;
     }
     shifted++;

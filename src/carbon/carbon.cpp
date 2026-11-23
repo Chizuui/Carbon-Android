@@ -736,6 +736,18 @@ X86_FUNC(sub_00094F30) {
     __imp__sub_00094F30(ctx, base);
 }
 
+// List-cleanup destructor (0x176F51, vtable 0x3B545C, called by sub_0016E190 with return address
+// 0x16E1BA): the vtable points 1 byte into the `mov eax, [esi+0x614]` at 0x176F50, so the
+// recompiler's sub_00176F51 starts with a garbage xchg/add (decoding the second byte of that mov
+// as `xchg [esi+eax], dl` / `add [eax], al`) that would corrupt a heap byte and the vtable's
+// first byte — and the corrupted vtable would trap again on the next cleanup of the same class.
+// Bypass it: tail-call the clean entry at 0x176F50 (list-head removal: load [esi+0x614], unlink
+// the node, poison it with 0xABADCAFE), which is the same code the garbage entry falls through to.
+X86_EXTERN_FUNC(__imp__sub_00176F50);
+X86_FUNC(sub_00176F51) {
+    __imp__sub_00176F50(ctx, base);
+}
+
 // Race-mode notify (0x240DE0): during the race load it walks the mode objects at [0x46EC64] and calls
 // a virtual method on each; for the degenerate career (no valid car) one of those calls returns NULL
 // and the game dereferenced [NULL+0x04] at 0x240E88 (tester log carbon-prev-349c0b48.log). The old

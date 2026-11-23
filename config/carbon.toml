@@ -17,6 +17,17 @@ code_sections = [".text", "D3D", "D3DX", "XGRPH", "DSOUND", "XPP"]
 # the vtable genuinely points there, and the leading `in al,dx` is a harmless no-op the runtime
 # ignores (x86_priv logs once and continues, eax is overwritten by the prologue).
 0x176F12 = "sub_00176F12"
+# 0x176F51: same vtable (0x3B545C) and same caller (sub_0016E190, return address 0x16E1BA) as
+# 0x176F12 — the next missing virtual function on that cleanup path. Trapped (SIGABRT at t=71s)
+# when selecting Circuit in Quick Race (2026-11-23). The address is 0x41 bytes into sub_00176F10
+# (past its SEH prologue); the recompiler explicitly asks for it, so it is added the same way.
+# CAREFUL: 0x176F51 is 1 byte into the `mov eax, [esi+0x614]` at 0x176F50, so the recompiler's
+# sub_00176F51 starts with a garbage xchg/add that would corrupt a heap byte and the vtable's
+# first byte. The clean entry is 0x176F50 (added below), and carbon.cpp overrides sub_00176F51
+# to tail-call it, bypassing the garbage.
+0x176F51 = "sub_00176F51"
+# 0x176F50: clean entry of the list-head removal above (mov eax, [esi+0x614]; test; unlink; poison).
+0x176F50 = "sub_00176F50"
 
 # functions the host replaces or calls by name, 0 where the image has none
 [symbols]

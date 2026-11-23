@@ -413,13 +413,18 @@ struct Button {
 // the layout is set in the settings panel (TOUCH CONTROLS): its steering, opacity, size, and the editor that moves the
 // controls, see the functions at the end. A Text control shows its label.
 // the face buttons' captions are Carbon's controls (Y: Crew Member, A: Handbrake, B: Nitrous, X: Speedbreaker, Black: Change Camera, White: Rear View)
+// — but the game's own mapping is the opposite for Y and White: the game reads Y as Rear View and White as
+// Crew Member (tester report: the two buttons were swapped). So the touch buttons' press indices are
+// crossed: the White-labelled button presses Y's analog slot and the Y-labelled button presses White's,
+// so each button does what its caption says. The physical gamepad is unaffected (its Y/White go through
+// the rebind layer, where the user can swap them if needed).
 constexpr Button kButtons[] = {
     {"a", "A", Icon::Text, kAnalogA, Shape::Round, "E-BRAKE"},
     {"b", "B", Icon::Text, kAnalogB, Shape::Round, "NITROUS"},
     {"x", "X", Icon::Text, kAnalogX, Shape::Round, "SPEEDBREAKER"},
-    {"y", "Y", Icon::Text, kAnalogY, Shape::Round, "CREW MEMBER"},
+    {"y", "Y", Icon::Text, 5, Shape::Round, "CREW MEMBER"},
     {"black", "BLACK", Icon::Text, 4, Shape::Tab, "CHANGE CAMERA"},
-    {"white", "WHITE", Icon::Text, 5, Shape::Round, "REAR VIEW"},
+    {"white", "WHITE", Icon::Text, kAnalogY, Shape::Round, "REAR VIEW"},
     {"lt", "LT", Icon::Text, kAnalogLT, Shape::Tab},
     {"rt", "RT", Icon::Text, kAnalogRT, Shape::Tab},
     {"start", "START", Icon::Text, kBit + 4, Shape::Pill},
@@ -688,17 +693,25 @@ constexpr float kTabAspect = 2.3f, kPillAspect = 2.1f, kPedalAspect = 0.6f;
 
 // In FEng menus (before a race / while paused), show D-Pad (left), ABXY Xbox diamond (right),
 // Black/White below-right of ABXY, and Start/Back (Select) at the top alongside Settings.
+// The slot is by the button's identity (its id), NOT its press index: the Y and White buttons'
+// press indices are crossed (see kButtons) so the slot must not follow the press.
 int FeMenuSlot(size_t i) {
     if (i >= kButtonCount) return -1;
-    int press = kButtons[i].press;
-    if (press >= kAnalogA && press <= kAnalogY) return press - kAnalogA;  // 0..3: A, B, X, Y
-    if (press >= kBit && press <= kBit + 3) return 4 + (press - kBit);   // 4..7: Up, Down, Left, Right
-    if (press == kBit + 4) return 8;                                     // 8: Start
-    if (press == kBit + 5) return 9;                                     // 9: Back (Select)
-    if (press == 4) return 10;                                           // 10: Black
-    if (press == 5) return 11;                                           // 11: White
-    if (press == kAnalogLT) return 12;                                   // 12: LT (top-left)
-    if (press == kAnalogRT) return 13;                                   // 13: RT (top-right)
+    std::string_view id = kButtons[i].id;
+    if (id == "a") return 0;
+    if (id == "b") return 1;
+    if (id == "x") return 2;
+    if (id == "y") return 3;
+    if (id == "dpad_up") return 4;
+    if (id == "dpad_down") return 5;
+    if (id == "dpad_left") return 6;
+    if (id == "dpad_right") return 7;
+    if (id == "start") return 8;
+    if (id == "back") return 9;
+    if (id == "black") return 10;
+    if (id == "white") return 11;
+    if (id == "lt") return 12;
+    if (id == "rt") return 13;
     return -1;
 }
 
@@ -1568,19 +1581,18 @@ constexpr Rgb kGlass = {28, 22, 16}, kEdge = {235, 205, 150}, kSaffron = {224, 1
 ImU32 Fade(Rgb c, int a) { return Fade(c.r, c.g, c.b, a); }
 
 // the Xbox controller's colour of a button: A green, B red, X blue, Y yellow, the triggers saffron, Black and White
-// jade, the rest the edge's
-Rgb ButtonColour(int press) {
-    switch (press) {
-        case kAnalogA: return {95, 196, 110};
-        case kAnalogB: return {224, 86, 76};
-        case kAnalogX: return {111, 159, 224};
-        case kAnalogY: return {232, 190, 72};
-        case kAnalogLT:
-        case kAnalogRT: return kSaffron;
-        case 4:
-        case 5: return kJade;
-        default: return kEdge;
-    }
+// jade, the rest the edge's. By the button's identity, not its press index: the Y and White buttons'
+// press indices are crossed (see kButtons) so the colour must not follow the press.
+Rgb ButtonColour(size_t i) {
+    if (i >= kButtonCount) return kEdge;
+    std::string_view id = kButtons[i].id;
+    if (id == "a") return {95, 196, 110};
+    if (id == "b") return {224, 86, 76};
+    if (id == "x") return {111, 159, 224};
+    if (id == "y") return {232, 190, 72};
+    if (id == "lt" || id == "rt") return kSaffron;
+    if (id == "black" || id == "white") return kJade;
+    return kEdge;
 }
 
 // the art white at the layout's opacity, warm while pressed
@@ -1694,11 +1706,11 @@ void DrawControl(ImDrawList* dl, size_t i, bool on, int fade, float th) {
     if (on) hw *= 0.9f, hh *= 0.9f;  // pressed in
     ImVec2 c(cx, cy);
     Shape shape = ShapeOf(i);
-    Rgb colour = ButtonColour(b.press);
+    Rgb colour = ButtonColour(i);
     ImU32 fill = on ? Fade(kSaffron, 120) : Fade(kGlass, 155 * fade / 100);
     switch (shape) {
         case Shape::Round: {
-            bool face = b.caption != nullptr || b.press == 5;
+            bool face = b.caption != nullptr;
             dl->AddCircleFilled(c, hh, on && face ? Fade(colour, 110) : fill, 48);
             dl->AddCircle(c, hh, face ? Fade(colour, 200 * fade / 100) : Fade(kEdge, 70 * fade / 100), 48,
                           th * (face ? 1.1f : 0.7f));

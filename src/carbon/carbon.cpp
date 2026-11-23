@@ -748,6 +748,47 @@ X86_FUNC(sub_00176F51) {
     __imp__sub_00176F50(ctx, base);
 }
 
+// FEng object layout (0x172400): walks the child list at [obj+0x30] via [node+0x04] (guest
+// 0x172440) and lays the object out by its type byte [obj+0x03]. Opening the world map from free
+// roam force-closes (tester log carbon-prev.log, session 13:47:01): SIGSEGV at 172400+0xf8,
+// called from sub_00174CD0+0xb4, fault addr 0x1e8501678 — a wild node pointer in that list
+// (a node at 0x1e8501674, +0x04 = the fault addr), i.e. the child list is corrupt (stale node
+// left by the free-roam minimap/road-graph state; opening the map directly from the menu does
+// not crash, and a relog is fine). Guard: validate the object and walk the list with
+// IsCommitted checks before calling the original; if anything is wild, skip the layout for
+// that object (return early) instead of crashing. The object just doesn't get positioned —
+// better than a force close. Plain ret: the caller cleans up the 3 stack args.
+X86_EXTERN_FUNC(__imp__sub_00172400);
+X86_FUNC(sub_00172400) {
+    // Args (cdecl): [esp+4]=object, [esp+8]=arg2, [esp+12]=arg3. On entry ctx.esp is the ret addr.
+    uint32_t obj = game::IsCommittedRange(ctx.esp + 4, 4) ? kernel::R32(ctx.esp + 4) : 0;
+    bool bad = false;
+    if (!obj || !game::IsCommittedRange(obj, 0x34)) {
+        bad = true;
+    } else {
+        uint32_t cur = kernel::R32(obj + 0x30);
+        int n = 0;
+        while (cur) {
+            if (!mem::IsCommitted(cur + 4)) { bad = true; break; }
+            uint32_t next = kernel::R32(cur + 4);
+            if (next && !mem::IsCommitted(next)) { bad = true; break; }
+            cur = next;
+            if (++n > 10000) { bad = true; break; }  // cycle guard
+        }
+    }
+    if (bad) {
+        static int logged = 0;
+        if (logged < 4) {
+            LOGR("worldmap: 172400 guard: bad object/list (obj=%08X), skipping layout", obj);
+            logged++;
+        }
+        ctx.eax = 0;
+        ctx.esp += 4;  // plain ret (caller cleans up the 3 args)
+        return;
+    }
+    __imp__sub_00172400(ctx, base);
+}
+
 // Race-mode notify (0x240DE0): during the race load it walks the mode objects at [0x46EC64] and calls
 // a virtual method on each; for the degenerate career (no valid car) one of those calls returns NULL
 // and the game dereferenced [NULL+0x04] at 0x240E88 (tester log carbon-prev-349c0b48.log). The old

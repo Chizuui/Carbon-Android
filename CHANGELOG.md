@@ -1,5 +1,7 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Force close pas buka world map dari free roam dibenerin — pas buka map, game jalanin fungsi layout objek yang jalanin daftar anak objek, dan daftarnya ada node yang alamatnya ngaco (sisa state free roam), jadi langsung crash. Sekarang daftarnya dicek dulu sebelum dijalanin; kalau ada yang ngaco, objeknya dilewatin aja (nggak di-layout) daripada force close.
+
 - Crash pas pilih Circuit di Quick Race dibenerin — game manggil destructor dari vtable yang recompiler-nya belum bikin (0x176F51), jadi indirect call-nya trap dan game force close; sekarang alamat itu ditambahin ke daftar fungsi biar ikut di-recompile (plus override biar nggak jalanin instruksi sampah di tengah-tengahnya).
 - Geseran grid minimap dibalikin ke 2 angka — geser 4 angka kemarin ternyata bikin separuh jalan di minimap ilang (kelihatan di screenshot + log tester), jadi balik ke cara lama yang nampilin semua jalan kuningnya penuh; grid putihnya sendiri masih diselidiki, log diagnostik baru nyatet nilai rect asli pas game nulis biar layout-nya ketahuan.
 - Grid jalan putih di minimap dicoba dibenerin (percobaan ini DIBATALKAN di build berikutnya) — videonya membuktikan grid putihnya nggak pernah muncul sama sekali, di free roam maupun di balapan (cuma garis kuning yang kelihatan). Dugaan awal: kode yang mindahin grid pas minimap digeser cuma mindahin 2 dari 4 angka rect-nya. Ternyata geser 4 angka malah bikin separuh jalan ilang, jadi dugaannya salah — layout rect-nya masih diselidiki.

@@ -264,6 +264,14 @@ void WriteFeVar(const X86Context& base_ctx, uint8_t* base, uint32_t id, uint32_t
 // NOT create a missing FeVar, so if the FeVar truly does not exist the write fails silently and the
 // bypass is a no-op — but if the FeVar exists and is 0, the write succeeds and the gate passes. The
 // diagnostic below logs the actual FeVar value so the next log proves which case it is.
+// CORRECTION 2026-11-23 (2): the diagnostic proved it — `0xBCD FeVar = 00000000` in free roam on two
+// devices, so the FeVar genuinely does not exist and the WriteFeVar below is a silent no-op; the
+// bypass fired 8x in the log but 158AE0 still never ran. The real bypass is now the sub_0007DD00
+// getter hook below: when 158520's 0xBCD gate call finds no FeVar, the hook reports the dummy route
+// id as found, so the gate passes and the original rebuilds the roads. This scope is kept for its
+// diagnostic and its log lines (they prove the hook ran and the road array was populated); its FeVar
+// write is best-effort only. The dummy id also flows to sub_001849F0 (route lookup), which returns
+// NULL for it, so 19C670/19C580 get a NULL `this` — they have NULL guards below for that.
 struct NoRouteRoadScope {
     X86Context ctx;
     uint8_t* base = nullptr;
@@ -362,6 +370,102 @@ X86_FUNC(sub_00158AE0) {
     if ((++n_158ae0 % 600) == 1) LOGR("minimap: sub_00158AE0 entry #%d", n_158ae0);
     game::MinimapOriginScope scope(ctx.ecx);
     __imp__sub_00158AE0(ctx, base);
+}
+
+// FeVar getter (sub_0007DD00) — the no-route bypass, done below the FeVar API. sub_00158520's gate
+// calls this getter for the 0xBCD race-route var, and it returns FALSE when the FeVar does not exist,
+// which is always the case in free roam (diagnostic: `0xBCD FeVar = 00000000`), so the gate exits
+// early and no road data is built. The FeVar API cannot create the var (the setter fails the same
+// NULL-bucket check), so lend the gate a route id one level lower: when this getter is called from
+// 158520's 0xBCD site (return address 0x15859E) and the real getter would find nothing, report the
+// dummy route id as found. The dummy is a constant, so the rebuild behaves like a race with a
+// constant route id (the capacity check, not a route change, drives updates as the player drives);
+// it is written only into 158520's stack local [ebp-0x30], so no other code ever sees it. When a real
+// route exists the real getter's answer is used untouched (races are unaffected). The call site is
+// identified by its return address, so every other FeVar read in the game passes through unchanged
+// (ReadFeVar/QueryFeVar use a scratch stack with 0 at [esp], so they pass through too). The real
+// getter is run on a copy of the context to decide found/not-found exactly — a bucket can exist while
+// the hash is absent — and only its eax/esp effects are applied back to the real context. The getter
+// is `ret 0x14`, so the override pops the return address (4) plus the 5 args (20) = 24. RE 2026-11-23.
+X86_EXTERN_FUNC(__imp__sub_0007DD00);
+X86_FUNC(sub_0007DD00) {
+    // Fast path: only 158520's 0xBCD gate call is ever overridden. The return address is at [esp]
+    // (the caller pushed it); anything else passes through immediately.
+    uint32_t retaddr = (mem::IsCommitted(ctx.esp) && mem::IsCommitted(ctx.esp + 3)) ? kernel::R32(ctx.esp) : 0;
+    if (retaddr != 0x15859Eu || ctx.ecx != 0x456830u) {
+        __imp__sub_0007DD00(ctx, base);
+        return;
+    }
+    uint32_t hash = (mem::IsCommitted(ctx.esp + 4) && mem::IsCommitted(ctx.esp + 7)) ? kernel::R32(ctx.esp + 4) : 0;
+    if (hash != 0xBCDu) {
+        __imp__sub_0007DD00(ctx, base);
+        return;
+    }
+    // Run the real getter on a copy: it decides exactly whether the FeVar exists, without
+    // disturbing the real context. Only eax (found) and esp (the ret 0x14 cleanup) are applied back.
+    X86Context sc = ctx;
+    __imp__sub_0007DD00(sc, base);
+    bool found = (sc.eax & 0xFFu) != 0;
+    if (!found && game::NoRouteRoadScope::RoadArrayPopulated()) {
+        uint32_t out_ptr = (mem::IsCommitted(ctx.esp + 8) && mem::IsCommitted(ctx.esp + 11)) ? kernel::R32(ctx.esp + 8) : 0;
+        if (out_ptr && game::IsCommittedRange(out_ptr, 4)) {
+            kernel::W32(out_ptr, game::NoRouteRoadScope::kDummyRoute);
+            static int logged = 0;
+            if (logged < 8) {
+                LOGR("minimap: getter hook: 0xBCD absent, reporting dummy route id");
+                logged++;
+            }
+            ctx.eax = 1;
+            ctx.esp += 24;  // ret 0x14: pop retaddr (4) + 5 args (20)
+            return;
+        }
+    }
+    ctx.eax = sc.eax;
+    ctx.esp += 24;
+}
+
+// Route-entry accessors (sub_0019C670/19C580): 158520 calls them on the entry sub_001849F0 finds for
+// the route id, to fill the route-highlight bounds ([esi+0x170]/[esi+0x16C]/[esi+0x174]/[esi+0x178]).
+// With the dummy route id 1849F0 finds no entry and returns NULL, so these would run with a NULL
+// `this` — their [esi+0x0C]/[esi+0x10] reads are absorbed by the null page, but the callees they
+// invoke on the NULL object (180720/180770) are not verified safe. Return early instead and zero the
+// 16-byte out struct, so the minimap gets a degenerate (empty) route highlight rather than garbage.
+// Inert for every normal caller: `this` is never NULL outside the dummy-route path. Both are
+// `ret 0x04` (pop retaddr + 1 arg = 8). RE 2026-11-23.
+X86_EXTERN_FUNC(__imp__sub_0019C670);
+X86_FUNC(sub_0019C670) {
+    if (!ctx.ecx) {
+        uint32_t out_ptr = (mem::IsCommitted(ctx.esp + 4) && mem::IsCommitted(ctx.esp + 7)) ? kernel::R32(ctx.esp + 4) : 0;
+        if (out_ptr && game::IsCommittedRange(out_ptr, 16)) {
+            for (int i = 0; i < 4; i++) kernel::W32(out_ptr + uint32_t(i) * 4u, 0);
+        }
+        static int logged = 0;
+        if (logged < 4) {
+            LOGR("minimap: 19C670 null route entry, skipping highlight bounds");
+            logged++;
+        }
+        ctx.esp += 8;
+        return;
+    }
+    __imp__sub_0019C670(ctx, base);
+}
+
+X86_EXTERN_FUNC(__imp__sub_0019C580);
+X86_FUNC(sub_0019C580) {
+    if (!ctx.ecx) {
+        uint32_t out_ptr = (mem::IsCommitted(ctx.esp + 4) && mem::IsCommitted(ctx.esp + 7)) ? kernel::R32(ctx.esp + 4) : 0;
+        if (out_ptr && game::IsCommittedRange(out_ptr, 16)) {
+            for (int i = 0; i < 4; i++) kernel::W32(out_ptr + uint32_t(i) * 4u, 0);
+        }
+        static int logged = 0;
+        if (logged < 4) {
+            LOGR("minimap: 19C580 null route entry, skipping highlight bounds");
+            logged++;
+        }
+        ctx.esp += 8;
+        return;
+    }
+    __imp__sub_0019C580(ctx, base);
 }
 
 // The same stale-origin defect in the remaining Hud_Minimap readers of +0xB4/+0xB8: the target ring

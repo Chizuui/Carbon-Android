@@ -643,12 +643,14 @@ X86_FUNC(sub_00242FD0) {
                 }
             }
         }
-        // After the repair: if no 1b58 handle resolves to a valid car and there is no fallback car
-        // at all, the game's own lookup (sub_0007B720) returns NULL and 0x2432F5 dereferences
-        // [esi+0x08] — the world-map crash. Do not call the original in that case: the race load
-        // cannot spawn cars from a db with no valid car anyway. This is a mitigation, not a repair
-        // of the degenerate car_db — and 242FD0 also spawns the race cars, so skipping it may break
-        // the race load in a different way; the log line tells us it fired.
+        // The repair above is the only car_db fix attempted here. The old code skipped the original
+        // entirely when no valid car existed — but that left the race with no cars spawned and the
+        // mode notify (240DE0) skipped every frame, so the race loaded to a black screen (HUD only,
+        // tester log carbon-prev_1_24yw.log: 2248x 240DE0 skips, 0 errors, 68 s session). The null
+        // safety net (null page + null icall returning 0) now absorbs the null derefs/calls the
+        // skip was protecting against, so let the original run: it may spawn the car from the
+        // degenerate db (the handle IS in the db, only its type is unknown) or handle the 0
+        // gracefully. The log line stays so the log shows the state.
         bool any_valid = false;
         for (uint32_t idx = 0; idx < max_idx; idx++) {
             uint32_t hh = QueryFeVar(ctx, base, 0x1B58u, idx, 0xFFFFFFFFu);
@@ -658,9 +660,7 @@ X86_FUNC(sub_00242FD0) {
         if (!any_valid && PickFallbackCarHandle(car_db, h1b60) == 0) {
             uint32_t h0 = QueryFeVar(ctx, base, 0x1B58u, 0, 0xFFFFFFFFu);
             uint32_t slot0 = FindCarSlotInDb(car_db, h0);
-            LOGR("career: 242FD0 no valid car, skipping (career=%08X flow=%u 1b58[0]=%08X slot=%08X type=%08X flags=%08X)", career, flow, h0, slot0, slot0 ? kernel::R32(slot0 + 8u) : 0, slot0 ? kernel::R32(slot0 + 0x0Cu) : 0);
-            ctx.esp += 8;  // pop the return address + the 1 stack arg, like the original's ret 4
-            return;
+            LOGR("career: 242FD0 no valid car, running anyway (career=%08X flow=%u 1b58[0]=%08X slot=%08X type=%08X flags=%08X)", career, flow, h0, slot0, slot0 ? kernel::R32(slot0 + 8u) : 0, slot0 ? kernel::R32(slot0 + 0x0Cu) : 0);
         }
     } else {
         static uint32_t last_gated_flow = 0xFFFFFFFFu;
@@ -698,40 +698,17 @@ X86_FUNC(sub_00094F30) {
     __imp__sub_00094F30(ctx, base);
 }
 
-// The career's car database is degenerate: a career is loaded, but no 1b58 handle resolves to a valid
-// car and there is no fallback car at all. The same state that makes 242FD0 skip also breaks the
-// race-mode notify (sub_00240DE0): one of its virtual calls returns NULL and the game dereferences
-// [NULL+0x04] at 0x240E88 (tester log carbon-prev-349c0b48.log: crash right after the 242FD0 skip).
-// Returns true only when a career is loaded and its db is in that state; false when no career is
-// loaded (then there is no db to be degenerate) or when a valid car exists.
-static bool CareerHasNoValidCar(const X86Context& ctx, uint8_t* base) {
-    uint32_t sys = game::IsCommittedRange(game::kCareerRoot, 4) ? kernel::R32(game::kCareerRoot) : 0;
-    uint32_t count = game::IsCommittedRange(sys + 0xD8u, 4) ? kernel::R32(sys + 0xD8u) : 0;
-    uint32_t list = (count > 0 && game::IsCommittedRange(sys + 0xD4u, 4)) ? kernel::R32(sys + 0xD4u) : 0;
-    uint32_t career = game::IsCommittedRange(list, 4) ? kernel::R32(list) : 0;
-    if (career < 0x10000u || !game::IsCommittedRange(career + 0x234u, 0xC8u * 0x14u)) return false;
-    uint32_t car_db = career + 0x234u;
-    uint32_t h1b60 = QueryFeVar(ctx, base, 0x1B60u, 0xFFFFFFFFu, 0xFFFFFFFFu);
-    uint32_t max_idx = (game::IsCommittedRange(0x497D44u, 4) && kernel::R32(0x497D44u) == 1u) ? 2u : 1u;
-    for (uint32_t idx = 0; idx < max_idx; idx++) {
-        uint32_t h = QueryFeVar(ctx, base, 0x1B58u, idx, 0xFFFFFFFFu);
-        uint32_t slot = FindCarSlotInDb(car_db, h);
-        if (slot && ((kernel::R32(slot + 0x0Cu) & kCarOwnedFlag) != 0 || IsKnownCarType(kernel::R32(slot + 8u)))) return false;
-    }
-    return PickFallbackCarHandle(car_db, h1b60) == 0;
-}
-
 // Race-mode notify (0x240DE0): during the race load it walks the mode objects at [0x46EC64] and calls
 // a virtual method on each; for the degenerate career (no valid car) one of those calls returns NULL
-// and the game dereferences [NULL+0x04] at 0x240E88. Skip the notify in that state — the same
-// mitigation as 242FD0. 240DE0 is a thiscall with 1 stack arg and ret 4, so the skip pops 8.
+// and the game dereferenced [NULL+0x04] at 0x240E88 (tester log carbon-prev-349c0b48.log). The old
+// code skipped the notify in that state — but 240DE0 is called every frame, so skipping it meant the
+// mode transition never completed and the race loaded to a black screen (HUD only, tester log
+// carbon-prev_1_24yw.log: 2248x skips, 0 errors, 68 s session). The null safety net (null page +
+// null icall returning 0) now absorbs those null accesses, so the notify runs and the race can set
+// up. The CareerHasNoValidCar helper is gone with the skip; this is now a pass-through kept as the
+// hook point.
 X86_EXTERN_FUNC(__imp__sub_00240DE0);
 X86_FUNC(sub_00240DE0) {
-    if (CareerHasNoValidCar(ctx, base)) {
-        LOGR("career: 240DE0 no valid car, skipping");
-        ctx.esp += 8;  // pop the return address + the 1 stack arg, like the original's ret 4
-        return;
-    }
     __imp__sub_00240DE0(ctx, base);
 }
 

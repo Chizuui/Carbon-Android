@@ -5,9 +5,11 @@
 // places each frame (the map scrolls its track) and the package's scripts others, so they are moved after the FEng
 // is updated, the last writer before the drawing; and a place found other than as it was left is the game's new one,
 // moved again from there
+#include <cmath>
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 #include "common/hud_layout.h"
 #include "cpu/x86_ops.h"
@@ -314,6 +316,101 @@ struct NoRouteRoadScope {
     }
 };
 
+// Free roam has no race route, so no road-graph node carries the "on route" flag (bit15 at
+// node+0x0A) the rebuild's walk requires (guest 0x1586C6: bit15 set, bit11 clear), and the walk
+// builds 0 segments even though the graph is loaded (5790 nodes, diagnostic 2026-11-23). The
+// route-marking pass (sub_001A1910, from the GPS update sub_001B0660) is the only code that sets
+// bit15 — up to 100 nodes along a computed route — and bit11 is never written by code (it comes
+// from the RNsg disc data). So in free roam, temporarily lend bit15 to the nodes near the player
+// for the synchronous rebuild call, then restore every node's original flags. The player position
+// is the minimap's own centre: the per-frame driver (sub_00169270) has 0x15DA60 fill [esi+0xAC] =
+// player z and [esi+0xB0] = -player x, then normalises them with the same constants the walk uses
+// ([0x3B3FBC]=-7300, [0x3B3FB8]=1/16000, [0x3B3FB4]=-2000, [0x3A386C]=1.0), so at rebuild time they
+// hold the previous frame's normalised (u,v) = (z,-x). The visible radius follows the walk's
+// world-to-FEng scale (A0/1000 FEng per world unit, A0 = [esi+0xA0]) and the RADAR_RING radius
+// (~64 FEng, measured from a tester screenshot and the 128x128 TRACK_MAP tile area): R = 64000/A0,
+// clamped to [300,4000]. Only nodes whose segment midpoint is within R are marked (cap 512); the
+// rest of the graph is untouched. The flags are restored in the destructor, so no other code — the
+// walk's neighbour scan, the traffic AI, the route marking — ever sees a modified flag outside
+// this call. Nodes that already had bit15 (a stale route marking; the game never clears it) keep
+// it: the original u16 is saved and restored verbatim, never just cleared. RE 2026-11-23.
+struct FreeRoamRoadScope {
+    struct Saved {
+        uint32_t node = 0;
+        uint16_t flags = 0;
+    };
+    std::vector<Saved> saved;
+
+    explicit FreeRoamRoadScope(const X86Context& ctx, uint8_t* base, uint32_t minimap) {
+        if (!minimap) return;
+        // Free roam only: a real route already marks its nodes, and races must not change.
+        uint32_t cur = ReadFeVar(ctx, base, 0xBCDu, 0u);
+        if (cur != 0u && cur != 0x99C27E3Bu) return;
+        if (!NoRouteRoadScope::RoadArrayPopulated()) return;
+        if (!mem::IsCommitted(minimap + 0xA0u) || !mem::IsCommitted(minimap + 0xA3u) ||
+            !mem::IsCommitted(minimap + 0xACu) || !mem::IsCommitted(minimap + 0xAFu) ||
+            !mem::IsCommitted(minimap + 0xB0u) || !mem::IsCommitted(minimap + 0xB3u)) return;
+        float norm_u = Float(minimap + 0xACu);  // (player z + 7300) / 16000
+        float norm_v = Float(minimap + 0xB0u);  // 1 - ((-player x) + 2000) / 16000
+        if (!(norm_u >= 0.0f && norm_u <= 1.0f && norm_v >= 0.0f && norm_v <= 1.0f)) return;
+        if (norm_u == 0.0f && norm_v == 0.0f) return;  // never set
+        float a0 = Float(minimap + 0xA0u);
+        if (!(a0 > 0.0f) || !std::isfinite(a0)) return;
+        // Player centre in (u,v) = (z,-x) world units, inverting the driver's normalisation.
+        float u_p = norm_u * 16000.0f - 7300.0f;
+        float v_p = (1.0f - norm_v) * 16000.0f - 2000.0f;
+        // Visible world radius: the walk maps world to FEng at A0/1000 per unit, and the
+        // RADAR_RING radius is ~64 FEng, so R = 64000/A0. Clamp to a sane band.
+        float r = 64000.0f / a0;
+        if (r < 300.0f) r = 300.0f;
+        if (r > 4000.0f) r = 4000.0f;
+        float r2 = r * r;
+
+        uint32_t count = Peek(0x4B612Cu);
+        uint32_t nodes = Peek(0x4B6174u);
+        uint32_t pos = Peek(0x4B6170u);
+        if (!count || !nodes || !pos) return;
+        if (count > 20000u) return;  // sanity: not a real graph
+
+        constexpr int kMaxMark = 512;
+        int marked = 0;
+        for (uint32_t i = 0; i < count && marked < kMaxMark; i++) {
+            uint32_t node = nodes + i * 0x16u;
+            if (!mem::IsCommitted(node + 0x0Au) || !mem::IsCommitted(node + 0x0Bu)) continue;
+            uint16_t flags = kernel::R16(node + 0x0Au);
+            if (flags & 0x8000u) continue;  // already on a route (stale marking): leave it
+            if (flags & 0x0800u) continue;  // bit11 set (disc data): the walk skips it anyway
+            if (!mem::IsCommitted(node) || !mem::IsCommitted(node + 3)) continue;
+            uint16_t e1 = kernel::R16(node);
+            uint16_t e2 = kernel::R16(node + 2u);
+            uint32_t p1 = pos + uint32_t(e1) * 32u;
+            uint32_t p2 = pos + uint32_t(e2) * 32u;
+            if (!mem::IsCommitted(p1) || !mem::IsCommitted(p1 + 3) ||
+                !mem::IsCommitted(p1 + 8) || !mem::IsCommitted(p1 + 11) ||
+                !mem::IsCommitted(p2) || !mem::IsCommitted(p2 + 3) ||
+                !mem::IsCommitted(p2 + 8) || !mem::IsCommitted(p2 + 11)) continue;
+            // (u,v) = (z,-x): u = pos z (+8), v = -pos x (+0). Midpoint of the segment.
+            float um = (Float(p1 + 8u) + Float(p2 + 8u)) * 0.5f;
+            float vm = (-Float(p1) + -Float(p2)) * 0.5f;
+            float du = um - u_p, dv = vm - v_p;
+            if (du * du + dv * dv > r2) continue;
+            saved.push_back({node, flags});
+            kernel::W16(node + 0x0Au, static_cast<uint16_t>(flags | 0x8000u));
+            marked++;
+        }
+        static int logged = 0;
+        if (logged < 4) {
+            LOGR("minimap: free-roam marking: marked %d nodes near player (u=%.0f v=%.0f R=%.0f A0=%.1f)%s",
+                 marked, u_p, v_p, r, a0, marked >= kMaxMark ? " (capped)" : "");
+            logged++;
+        }
+    }
+
+    ~FreeRoamRoadScope() {
+        for (const Saved& s : saved) kernel::W16(s.node + 0x0Au, s.flags);
+    }
+};
+
 struct MinimapOriginScope {
     uint32_t obj = 0;
     float orig_x = 0.0f, orig_y = 0.0f;
@@ -361,6 +458,7 @@ X86_FUNC(sub_00158520) {
     game::g_minimap_obj = ctx.ecx;  // cache for ShiftRoadRects' minimap+0x30 rect object
     game::MinimapOriginScope scope(ctx.ecx);
     game::NoRouteRoadScope route(ctx, base);
+    game::FreeRoamRoadScope mark(ctx, base, ctx.ecx);
     // Diagnostic (2026-11-23): the getter-hook bypass passes the gate (hook fired 8x in the log)
     // but 0 segments are built — 158AE0 never runs and 1849F0 is never called (the 19C670/19C580
     // NULL guards were never hit), so the tail's `segments>0` check at guest 0x1589A2 fails. The
@@ -368,9 +466,9 @@ X86_FUNC(sub_00158520) {
     // 0x158698 `jbe 0x158ACB`), or builds 0 segments when every node fails the flag filter at
     // +0x0A (bit15 set, bit11 clear, guest 0x1586C6/0x1586D3). Log the graph state the walk sees,
     // plus the [esi+0x164] flag after the call (1 = segments were built, 0 = the walk produced
-    // nothing). Free roam only (no route FeVar), first 4 activations. The next log decides the
-    // fix: nodes==0 means the graph is not loaded in free roam (call the loader sub_002BDE50);
-    // nodes>0 with [esi+0x164]==0 means the filter rejects every node (route-marking problem).
+    // nothing). Free roam only (no route FeVar), first 4 activations. The diagnostic proved the
+    // filter case (5790 nodes loaded, [esi+0x164]==0), and FreeRoamRoadScope above now lends bit15
+    // to the nodes near the player, so [esi+0x164] should become 1 in the next log.
     static int probed = 0;
     bool probe = false;
     if (probed < 4) {

@@ -11,6 +11,12 @@ code_sections = [".text", "D3D", "D3DX", "XGRPH", "DSOUND", "XPP"]
 
 # extra entry points
 [functions]
+# 0x176F12: vtable destructor called by the list cleanup sub_0016E190 (return address 0x16E1BA);
+# the recompiler did not emit it, so the indirect call trapped (SIGABRT at t=437s, 2026-11-23).
+# The address is 2 bytes into sub_00176F10's SEH prologue (push ebp; mov ebp,esp at 0x176F10) —
+# the vtable genuinely points there, and the leading `in al,dx` is a harmless no-op the runtime
+# ignores (x86_priv logs once and continues, eax is overwritten by the prologue).
+0x176F12 = "sub_00176F12"
 
 # functions the host replaces or calls by name, 0 where the image has none
 [symbols]

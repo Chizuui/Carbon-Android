@@ -117,6 +117,57 @@ bool HudPackage(uint32_t p) {
 
 }  // namespace
 
+// The street grid's lines are positioned by the 30 road objects' own static rects (their data[0..15],
+// integers — dword 3 is a shared scale), NOT by the FEng position (data+0x1C/+0x20) that Move() shifts.
+// Those objects live in a global array (guest 0x46AB28, 30 entries, 0x14 stride) that the package walk
+// never reaches, so when the minimap is dragged the grid stays at the original origin (top-left) while
+// the route (drawn from the shifted origin) lands in the moved minimap — the "double map". Shift the
+// rects' X/Y (dwords 0,1) by the minimap's offset, persistently: this runs in UpdateAllPackages, before
+// FEng renders, unlike a hook scope that restores before render. Each object's original rect is tracked
+// so a changed offset or a reloaded road network does not accumulate or corrupt it. RE 2026-11-23: the
+// 73f7226 MinimapRectScope (shift data+0x1C/+0x20 in the 158AE0 hook) is ineffective — the rect is
+// independent of the position and the scope restores before render — so it was removed.
+struct RoadRect {
+    int32_t orig0 = 0, orig1 = 0;
+    int32_t last_dx = 0, last_dy = 0;
+    bool seen = false;
+};
+void ShiftRoadRects() {
+    float dxf = g_hud_x[kHudMinimap].load(std::memory_order_relaxed);
+    float dyf = g_hud_y[kHudMinimap].load(std::memory_order_relaxed);
+    int32_t sdx = static_cast<int32_t>(dxf + (dxf >= 0.0f ? 0.5f : -0.5f));
+    int32_t sdy = static_cast<int32_t>(dyf + (dyf >= 0.0f ? 0.5f : -0.5f));
+    static std::unordered_map<uint32_t, RoadRect> rects;
+    static int last_logged = -1;
+    constexpr uint32_t kRoadArray = 0x46AB28;
+    int shifted = 0;
+    for (int i = 0; i < 30; i++) {
+        uint32_t obj = Peek(kRoadArray + uint32_t(i) * 0x14u);
+        if (!obj) continue;
+        uint32_t data = Peek(obj + kObjectData);
+        if (!data || !mem::IsCommitted(data + 7)) continue;
+        int32_t cur0 = static_cast<int32_t>(kernel::R32(data));
+        int32_t cur1 = static_cast<int32_t>(kernel::R32(data + 4));
+        RoadRect& r = rects[data];
+        if (!r.seen) {
+            r.orig0 = cur0; r.orig1 = cur1; r.seen = true;
+        } else if (cur0 != r.orig0 + r.last_dx || cur1 != r.orig1 + r.last_dy) {
+            // The game rewrote the rect (new road network) — take the new values as the original.
+            r.orig0 = cur0; r.orig1 = cur1; r.last_dx = 0; r.last_dy = 0;
+        }
+        if (sdx != r.last_dx || sdy != r.last_dy) {
+            kernel::W32(data, static_cast<uint32_t>(r.orig0 + sdx));
+            kernel::W32(data + 4, static_cast<uint32_t>(r.orig1 + sdy));
+            r.last_dx = sdx; r.last_dy = sdy;
+        }
+        shifted++;
+    }
+    if (shifted != last_logged) {
+        LOGR("minimap: road rects shifted %d (dx=%d dy=%d)", shifted, sdx, sdy);
+        last_logged = shifted;
+    }
+}
+
 void ApplyHudLayout() {
     std::lock_guard<std::mutex> lock(g_hud_mtx);
     uint32_t cfeng = Peek(kCFEng), fe = cfeng ? Peek(cfeng) : 0;
@@ -128,6 +179,7 @@ void ApplyHudLayout() {
         Walk(Peek(p + kPackageObjects), -1, budget, seen);
     }
     g_moved.swap(seen);  // a package gone forgets its objects
+    ShiftRoadRects();
 }
 
 struct MinimapOriginScope {
@@ -153,39 +205,6 @@ struct MinimapOriginScope {
         if (!active) return;
         SetFloat(obj + kMinimapOriginX, orig_x);
         SetFloat(obj + kMinimapOriginY, orig_y);
-    }
-};
-
-// The "double map": sub_00158AE0 draws a second set of lines (the street grid) positioned via a FEng
-// object's rect, read with sub_0011AB70 from the object at minimap+0x30 — NOT through the package walk
-// ApplyHudLayout uses, so that object is never moved and its lines land at the original (unshifted)
-// origin (top-left) while the origin-based route lands at the shifted origin (main minimap). Shift that
-// object's data position (the same data+0x1C/+0x20 Move() shifts) for the call, like MinimapOriginScope.
-struct MinimapRectScope {
-    uint32_t data = 0;
-    float orig_x = 0.0f, orig_y = 0.0f;
-    bool active = false;
-
-    explicit MinimapRectScope(uint32_t minimap) {
-        if (!minimap || !mem::IsCommitted(minimap + 0x30u) || !mem::IsCommitted(minimap + 0x33u)) return;
-        uint32_t obj = kernel::R32(minimap + 0x30u);
-        if (!obj || !mem::IsCommitted(obj + 0x2Cu) || !mem::IsCommitted(obj + 0x2Fu)) return;
-        data = kernel::R32(obj + 0x2Cu);
-        if (!data || !mem::IsCommitted(data + 0x1Cu) || !mem::IsCommitted(data + 0x23u)) return;
-        float dx = g_hud_x[kHudMinimap].load(std::memory_order_relaxed);
-        float dy = g_hud_y[kHudMinimap].load(std::memory_order_relaxed);
-        if (dx == 0.0f && dy == 0.0f) return;
-        orig_x = Float(data + 0x1Cu);
-        orig_y = Float(data + 0x20u);
-        SetFloat(data + 0x1Cu, orig_x + dx);
-        SetFloat(data + 0x20u, orig_y + dy);
-        active = true;
-    }
-
-    ~MinimapRectScope() {
-        if (!active) return;
-        SetFloat(data + 0x1Cu, orig_x);
-        SetFloat(data + 0x20u, orig_y);
     }
 };
 
@@ -216,7 +235,6 @@ X86_FUNC(sub_00158AE0) {
     static int n_158ae0 = 0;
     if ((++n_158ae0 % 600) == 1) LOGR("minimap: sub_00158AE0 entry #%d", n_158ae0);
     game::MinimapOriginScope scope(ctx.ecx);
-    game::MinimapRectScope rect(ctx.ecx);
     __imp__sub_00158AE0(ctx, base);
 }
 
@@ -227,8 +245,6 @@ X86_FUNC(sub_00158AE0) {
 // same pattern, it has no direct callers in the recompiled code.
 X86_EXTERN_FUNC(__imp__sub_001581D0);
 X86_FUNC(sub_001581D0) {
-    game::MinimapOriginScope scope(ctx.ecx);
-    game::MinimapRectScope rect(ctx.ecx);
     __imp__sub_001581D0(ctx, base);
 }
 

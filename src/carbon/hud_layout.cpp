@@ -168,14 +168,20 @@ X86_FUNC(sub_0014D8B0) {
 
 // Hud_Minimap GPS route rebuild & render read cached TRACK_MAP coordinates at +0xB4/+0xB8 directly instead of
 // FEng object positions; shift them only for those calls so helper methods reading +0xB4/+0xB8 aren't double-shifted.
+// Diagnostic (tester bug: the minimap is empty in a pursuit — "map ilang"): count entries per function so a
+// race vs pursuit log shows whether the route rebuild early-outs when there is no active race route. Rate-limited.
 X86_EXTERN_FUNC(__imp__sub_00158520);
 X86_FUNC(sub_00158520) {
+    static int n_158520 = 0;
+    if ((++n_158520 % 600) == 1) LOGR("minimap: sub_00158520 entry #%d", n_158520);
     game::MinimapOriginScope scope(ctx.ecx);
     __imp__sub_00158520(ctx, base);
 }
 
 X86_EXTERN_FUNC(__imp__sub_00158AE0);
 X86_FUNC(sub_00158AE0) {
+    static int n_158ae0 = 0;
+    if ((++n_158ae0 % 600) == 1) LOGR("minimap: sub_00158AE0 entry #%d", n_158ae0);
     game::MinimapOriginScope scope(ctx.ecx);
     __imp__sub_00158AE0(ctx, base);
 }

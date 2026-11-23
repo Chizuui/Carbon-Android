@@ -1,5 +1,7 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Force close pas buka world map / pas bersih-bersih objek (0x173768, 0x175538) dibenerin — game ganti-ganti fungsi destructor di vtable yang sama tiap kali bersih-bersih objek, dan beberapa targetnya belum pernah di-compile ulang, jadi crash satu-satu. Sekarang kalau targetnya nggak dikenal di jalur bersih-bersih itu, dilewatin aja (nggak dijalanin) daripada force close, jadi crash sejenis nggak bakal muncul lagi.
+
 - Force close pas buka world map dari free roam dibenerin — pas buka map, game jalanin fungsi layout objek yang jalanin daftar anak objek, dan daftarnya ada node yang alamatnya ngaco (sisa state free roam), jadi langsung crash. Sekarang daftarnya dicek dulu sebelum dijalanin; kalau ada yang ngaco, objeknya dilewatin aja (nggak di-layout) daripada force close.
 
 - Crash pas pilih Circuit di Quick Race dibenerin — game manggil destructor dari vtable yang recompiler-nya belum bikin (0x176F51), jadi indirect call-nya trap dan game force close; sekarang alamat itu ditambahin ke daftar fungsi biar ikut di-recompile (plus override biar nggak jalanin instruksi sampah di tengah-tengahnya).

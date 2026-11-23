@@ -110,6 +110,22 @@ void x86_icall(X86Context& ctx, uint8_t* base, uint32_t target) {
         }
     }
     uint32_t ret = kernel::R32(ctx.esp);
+    // List-cleanup destructor path (sub_0016E190, return address 0x16E1BA): the game patches
+    // vtable[0] (0x3B545C, FEngMemoryPool) at runtime to a per-type destructor, and several of
+    // those targets were never recompiled — 0x176F12, 0x176F51, 0x173768, 0x175538, ... — the
+    // vtable often points 1 byte into an instruction (e.g. 0x176F51 into the mov at 0x176F50,
+    // 0x173768 into the cmp at 0x173767, 0x175538 into the push at 0x175537). Rather than
+    // whack-a-mole each new target, treat an unknown target on this cleanup path as a no-op
+    // destructor: log it and return 0, like the null-icall fix above. The object is being
+    // destroyed, so skipping its destructor leaks its memory but does not crash; the caller
+    // (16E190) unlinks and poisons the node itself. Plain ret: these destructors use `ret`
+    // (caller cleans up the 1 stack arg), verified on 0x176F12/0x176F50.
+    if (ret == 0x16E1BA) {
+        LOG_FIRST(32, "icall: unknown destructor %08X on cleanup path (ret 0016E1BA), skipping", target);
+        ctx.eax = 0;
+        ctx.esp += 4;  // pop the return address, like the callee's ret
+        return;
+    }
     LOGE("indirect call to %08X has no recompiled function (return address %08X, esp %08X)", target, ret, ctx.esp);
     LOGE("add 0x%X to [functions] in the image's config/*.toml and rebuild", target);
     x86_trap(ctx, ret, "indirect call to unknown code");

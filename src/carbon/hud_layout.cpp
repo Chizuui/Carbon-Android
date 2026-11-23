@@ -486,6 +486,32 @@ X86_FUNC(sub_00158520) {
         LOGR("minimap: after rebuild, [esi+0x164]=%u", flag);
         probed++;
     }
+    // Free roam only (no race route FeVar): the walk built route segments from the lent bit-15
+    // flags (FreeRoamRoadScope) or from stale route markings left by a previous race, and 158AE0
+    // draws those segments as thick yellow route lines (guest 0x158DC0 `or edx, 0x30B0D` outline
+    // and 0x158DE2 `or eax, 0x2DC2FF` fill — 0x2DC2FF as BGR is golden yellow RGB(255,194,45)).
+    // The walk builds segments ONLY from bit-15 nodes, so there is no white-road segment path to
+    // mark for instead. But the regular street grid is the 30 road objects (0x46AB28), drawn by
+    // 158AE0's FIRST loop (guest 0x158B33-0x158B65, unconditional) — so suppress the route draw by
+    // clearing [esi+0x164]: 158AE0's gate at guest 0x158B67 `test [esi+0x164]; jz 0x158F38`
+    // then skips the whole yellow route block and returns after the white grid. Safe because
+    // 158520 only WRITES [esi+0x164] (never reads it), the FEng object (0x572181E6) stays shown
+    // so 158AE0 still runs, and the destination GPS route (pink) plus the POI icons are drawn by
+    // a different function, not 158AE0 — they were visible before the marking fix when 158AE0
+    // never ran in free roam. Races are untouched: a real route id means the yellow route is
+    // correct there. The chunky look was the thick route lines obscuring the thin white grid;
+    // with them gone the thin grid is the display again.
+    if (ctx.ecx && mem::IsCommitted(ctx.ecx + 0x164u)) {
+        uint32_t cur = game::ReadFeVar(ctx, base, 0xBCDu, 0u);
+        if ((cur == 0u || cur == 0x99C27E3Bu) && (game::Peek(ctx.ecx + 0x164u) & 0xFFu) != 0u) {
+            kernel::G<uint8_t>(ctx.ecx + 0x164u) = 0;
+            static int cleared = 0;
+            if (cleared < 4) {
+                LOGR("minimap: free roam, cleared [esi+0x164] — yellow route draw suppressed, white grid only");
+                cleared++;
+            }
+        }
+    }
 }
 
 X86_EXTERN_FUNC(__imp__sub_00158AE0);

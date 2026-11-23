@@ -412,19 +412,22 @@ struct Button {
 };
 // the layout is set in the settings panel (TOUCH CONTROLS): its steering, opacity, size, and the editor that moves the
 // controls, see the functions at the end. A Text control shows its label.
-// the face buttons' captions are Carbon's controls (Y: Crew Member, A: Handbrake, B: Nitrous, X: Speedbreaker, Black: Change Camera, White: Rear View)
-// — but the game's own mapping is the opposite for Y and White: the game reads Y as Rear View and White as
-// Crew Member (tester report: the two buttons were swapped). So the touch buttons' press indices are
-// crossed: the White-labelled button presses Y's analog slot and the Y-labelled button presses White's,
-// so each button does what its caption says. The physical gamepad is unaffected (its Y/White go through
-// the rebind layer, where the user can swap them if needed).
+// the face buttons' captions are Carbon's controls (Y: Crew Member, A: Handbrake, B: Nitrous, X: Speedbreaker, Black: Change Camera, White: Rear View).
+// The press indices were crossed in 3870426 on a tester report that the two buttons were swapped
+// (the hypothesis: the game reads Y as Rear View and White as Crew Member). That hypothesis was
+// WRONG, and the crossing is reverted: on the 07fddb5 build the White button (pressing Y) showed
+// its pressed highlight in a screenshot (12:28:19) while the car was moving and the camera stayed
+// forward — sending Y does NOT do Rear View — and the user reported White "masih gabisa dipake".
+// So the game reads Y as Crew Member and White as Rear View, i.e. the MW captions were correct
+// all along; White sends the White slot (5) and Y sends Y (3). The physical gamepad is unaffected
+// (its Y/White go through the rebind layer, where the user can swap them if needed).
 constexpr Button kButtons[] = {
     {"a", "A", Icon::Text, kAnalogA, Shape::Round, "E-BRAKE"},
     {"b", "B", Icon::Text, kAnalogB, Shape::Round, "NITROUS"},
     {"x", "X", Icon::Text, kAnalogX, Shape::Round, "SPEEDBREAKER"},
-    {"y", "Y", Icon::Text, 5, Shape::Round, "CREW MEMBER"},
+    {"y", "Y", Icon::Text, kAnalogY, Shape::Round, "CREW MEMBER"},
     {"black", "BLACK", Icon::Text, 4, Shape::Tab, "CHANGE CAMERA"},
-    {"white", "WHITE", Icon::Text, kAnalogY, Shape::Round, "REAR VIEW"},
+    {"white", "WHITE", Icon::Text, 5, Shape::Round, "REAR VIEW"},
     {"lt", "LT", Icon::Text, kAnalogLT, Shape::Tab},
     {"rt", "RT", Icon::Text, kAnalogRT, Shape::Tab},
     {"start", "START", Icon::Text, kBit + 4, Shape::Pill},

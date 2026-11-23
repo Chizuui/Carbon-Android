@@ -17,6 +17,10 @@
 #include <vector>
 
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_system.h>
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
 #include <imgui.h>
 #include <imgui_internal.h>  // ClearActiveID, the drag scroll's
 
@@ -69,6 +73,37 @@ Settings DefaultSettings();  // native/main.cpp: a phone's first run, unlimited 
 namespace {
 
 std::atomic<bool> g_open{false};
+
+#ifdef __ANDROID__
+// Open the Android share sheet for the exported log file(s), so the player can send the log
+// straight to Discord, Telegram, ... The Java side (MostWantedActivity.shareLogFiles) builds the
+// ACTION_SEND intent and shows the chooser. SDL_GetAndroidJNIEnv attaches this thread to the JVM
+// when needed, and SDL_GetAndroidActivity returns the activity (MostWantedActivity). A missing
+// method or a null env/activity just means no share sheet; the Download copy is the fallback.
+void ShareLogFiles(const std::string& current, const std::string& prev) {
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+    jobject activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (!env || !activity) return;
+    jclass cls = env->GetObjectClass(activity);
+    if (!cls) {
+        env->DeleteLocalRef(activity);
+        return;
+    }
+    jmethodID mid = env->GetMethodID(cls, "shareLogFiles", "(Ljava/lang/String;Ljava/lang/String;)V");
+    if (mid) {
+        jstring jcur = env->NewStringUTF(current.c_str());
+        jstring jprev = env->NewStringUTF(prev.c_str());
+        env->CallVoidMethod(activity, mid, jcur, jprev);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        if (jcur) env->DeleteLocalRef(jcur);
+        if (jprev) env->DeleteLocalRef(jprev);
+    }
+    env->DeleteLocalRef(cls);
+    env->DeleteLocalRef(activity);
+}
+#else
+void ShareLogFiles(const std::string&, const std::string&) {}
+#endif
 
 // EXPORT LOG: the current run's log, copied where the player can send it. The log already lives in the shared
 // logs folder, but a tester has to know which of its files is this run's; the export is one clearly named copy
@@ -129,14 +164,19 @@ void ExportLog() {
     g_export_log_status = "SAVED";
     LOGR("export log: %s -> %s", src.string().c_str(), dst.string().c_str());
     std::string prev = logx::PrevPath();
+    std::filesystem::path pdst;
     if (!prev.empty()) {
-        std::filesystem::path pdst = copy(std::filesystem::path(prev), std::string(kGame.log) + "-prev-log");
+        pdst = copy(std::filesystem::path(prev), std::string(kGame.log) + "-prev-log");
         if (pdst.empty()) {
             LOGE("export log: cannot copy %s", prev.c_str());
         } else {
             LOGR("export log: %s -> %s", prev.c_str(), pdst.string().c_str());
         }
     }
+    // Share sheet: after the copy, offer the file(s) straight to Discord, Telegram, ...
+    // instead of making the tester dig the file out of Download. The copies above stay as
+    // the fallback when the share sheet cannot open (no app, FileProvider misconfigured).
+    ShareLogFiles(dst.string(), pdst.string());
 }
 
 // near-black warm panel, gold on dark red kept from the old panel, red only for the active nav and selections

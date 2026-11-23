@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- EXPORT LOG share sheet: which files FileProvider may serve to other apps.
+     external-path covers Download (where the log is exported) and the shared game folder;
+     external-files-path covers the fallback inside the app's own external files dir. -->
+<paths>
+    <external-path name="external" path="." />
+    <external-files-path name="appfiles" path="." />
+</paths>

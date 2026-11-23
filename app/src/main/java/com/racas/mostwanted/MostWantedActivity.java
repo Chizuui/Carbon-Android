@@ -22,6 +22,7 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.widget.Toast;
+import androidx.core.content.FileProvider;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -374,6 +375,33 @@ public class MostWantedActivity extends SDLActivity {
         } catch (ActivityNotFoundException e) {
             // no browser: nothing to open it with
         }
+    }
+
+    // Share the exported log file(s) with the Android share sheet (Discord, Telegram, ...).
+    // Called from native code after EXPORT LOG copies the file(s); currentPath is the current
+    // run's log, prevPath the previous session's log (empty when there is none). The files are
+    // shared through FileProvider, since file:// URIs are blocked since Android 7.
+    public void shareLogFiles(String currentPath, String prevPath) {
+        runOnUiThread(() -> {
+            try {
+                ArrayList<Uri> uris = new ArrayList<>();
+                String authority = getPackageName() + ".fileprovider";
+                if (currentPath != null && !currentPath.isEmpty())
+                    uris.add(FileProvider.getUriForFile(this, authority, new File(currentPath)));
+                if (prevPath != null && !prevPath.isEmpty())
+                    uris.add(FileProvider.getUriForFile(this, authority, new File(prevPath)));
+                if (uris.isEmpty()) return;
+                Intent send = new Intent(uris.size() > 1 ? Intent.ACTION_SEND_MULTIPLE : Intent.ACTION_SEND);
+                send.setType("text/plain");
+                if (uris.size() > 1) send.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+                else send.putExtra(Intent.EXTRA_STREAM, uris.get(0));
+                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(Intent.createChooser(send, "Share log"));
+            } catch (Exception e) {
+                // no app to share with, or the file is gone: the copy in Download is still there
+                Toast.makeText(this, "Cannot share log", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     // default.xbe or a disc image in the folder

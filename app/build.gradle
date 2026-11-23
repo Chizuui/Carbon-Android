@@ -114,3 +114,8 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 }
+
+dependencies {
+    // EXPORT LOG share sheet: FileProvider serves the exported log file(s) to other apps
+    implementation "androidx.core:core:1.13.1"
+}

@@ -484,7 +484,7 @@ static uint32_t g_widen_matrices = 0;  // the matrices while a wide view's proje
 
 X86_EXTERN_FUNC(__imp__sub_001040E0);
 X86_FUNC(sub_001040E0) {
-    const uint32_t view = kernel::R32(ctx.esp + 4);
+    const uint32_t view = game::IsCommittedRange(ctx.esp + 4, 4) ? kernel::R32(ctx.esp + 4) : 0;
     const uint32_t type = view && mem::IsCommitted(view + 8) ? kernel::R32(view + 8) : 0;
     const bool wide = mem::IsCommitted(0x45D294) && (kernel::G<uint8_t>(0x45D294) & 1);
     g_widen_matrices = wide && (type == 1 || type == 2 || (type >= 4 && type <= 7)) ? ctx.ecx : 0;
@@ -495,7 +495,11 @@ X86_FUNC(sub_001040E0) {
 X86_EXTERN_FUNC(__imp__sub_002EFCB4);
 X86_FUNC(sub_002EFCB4) {
     const uint32_t m = g_widen_matrices;
-    if (m && kernel::R32(ctx.esp + 8) == m && kernel::R32(ctx.esp + 12) == m + 0x40) {
+    // Guard the matrices pointer: it comes from the game's ecx and is never validated, and the
+    // write below runs every frame for every wide view — a wild m would corrupt committed memory
+    // (or host-fault). Only widen when the stack args and the whole matrices block are committed.
+    if (m && game::IsCommittedRange(ctx.esp + 4, 12) && game::IsCommittedRange(m, 0x44) &&
+        kernel::R32(ctx.esp + 8) == m && kernel::R32(ctx.esp + 12) == m + 0x40) {
         g_widen_matrices = 0;
         kernel::G<float>(m + 0x40) *= (16.0f / 9.0f) / game::Aspect();
     }
@@ -647,9 +651,10 @@ X86_FUNC(sub_00242FD0) {
                 }
             }
         }
-        // Retroactive unlock for cars bought while UNLOCK ALL was on: those purchases never got
-        // their type into the lock table (the buy-path fix only runs for purchases made after it
-        // landed), so with the cheat removed the car-select listing hides them — the tester reports
+        // Retroactive unlock for cars bought while UNLOCK ALL was on (in older builds — the cheat
+        // was removed in 2ec9008, but existing saves may still hold cars bought under it): those
+        // purchases never got their type into the lock table (the buy-path fix only runs for
+        // purchases made after it landed), so the car-select listing hides them — the tester reports
         // the cars "ikut ilang" (gone with the cheat). The lock table is global and the insert is
         // the same op the buy path does (8A4C0 insert, then 8A530 clear). Run once per career
         // address: walk every car_db slot, and for each slot with a real handle (not 0, not
@@ -815,7 +820,7 @@ X86_FUNC(sub_000624E0) {
         for (uint32_t d = 0x4507DC; d < 0x4508DC && !bad; d += 0x10) {
             if (!game::IsCommittedRange(d, 4)) { bad = true; break; }
             uint32_t node = kernel::R32(d);
-            if (node && !game::IsCommittedRange(node, 0x10)) bad = true;
+            if (node && !game::IsCommittedRange(node, 0x18)) bad = true;
         }
         // 16 table entries at 0x4508D8..0x450918 (4 apart); each is a region descriptor.
         for (uint32_t t = 0x4508D8; t < 0x450918 && !bad; t += 4) {
@@ -851,7 +856,7 @@ X86_FUNC(sub_00240DE0) {
     __imp__sub_00240DE0(ctx, base);
 }
 
-// Buy-car unlock (0xA19E0, FeVar op 0x1B59): when a car is bought the game clones the template slot
+// Buy-car unlock (0xA19E0): when a car is bought the game clones the template slot
 // into car_db (sub_0009CD00, flags low16 = 0x0004) and stores the new handle at career+0x26230, but it
 // never writes the car's id into the unlock table [0x45680C]. The car-select listing filters on that
 // table (every 0x8A5xx lock check short-circuits on UNLOCK ALL 0x46D784), so a bought car is hidden with

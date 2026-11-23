@@ -119,6 +119,8 @@ bool HudPackage(uint32_t p) {
 
 }  // namespace
 
+bool IsCommittedRange(uint32_t va, uint32_t size);  // defined in carbon.cpp
+
 // The street grid's lines are positioned by the 30 road objects' own static rects (their data[0..15],
 // integers — dword 3 is a shared scale), NOT by the FEng position (data+0x1C/+0x20) that Move() shifts.
 // Those objects live in a global array (guest 0x46AB28, 30 entries, 0x14 stride) that the package walk
@@ -156,7 +158,11 @@ int g_rect_diag_logged = 0;  // rate-limit for the rect-values diagnostic below
 int g_rect_rewrite_logged = 0;  // rate-limit for the rewrite (real values) diagnostic below
 
 void ShiftOneRect(uint32_t data, int32_t sdx, int32_t sdy, int& shifted) {
-    if (!data || !mem::IsCommitted(data + 7)) return;
+    // Guard the whole rect (4 dwords, 16 bytes): data comes from a chained guest pointer (road
+    // array -> obj -> data), and a corrupt entry yielding a committed-but-wrong data would make
+    // the writes below corrupt arbitrary committed memory every present. A single-page check on
+    // data+7 misses a page straddle, so validate the full 16-byte range.
+    if (!data || !game::IsCommittedRange(data, 16)) return;
     int32_t cur0 = static_cast<int32_t>(kernel::R32(data));
     int32_t cur1 = static_cast<int32_t>(kernel::R32(data + 4));
     RoadRect& r = g_road_rects[data];
@@ -211,7 +217,10 @@ void ShiftRoadRects() {
     // while the circle moves — the POIs/route appear detached from the minimap. Shift its rect the
     // same way, through the same tracking map (so if it ever coincides with a road object it is only
     // shifted once). The minimap game object is cached from the 158520/165C00 hooks (ctx.ecx).
-    if (g_minimap_obj && mem::IsCommitted(g_minimap_obj + 0x33u)) {
+    // The minimap game object is cached from the 158520/165C00 hooks (ctx.ecx). Validate the whole
+    // object header (0x34 bytes, covers the [minimap+0x30] rect-object read) before trusting it —
+    // a stale cached pointer would read garbage and shift a wrong object's rect.
+    if (g_minimap_obj && game::IsCommittedRange(g_minimap_obj, 0x34)) {
         uint32_t rect_obj = kernel::R32(g_minimap_obj + 0x30u);
         if (rect_obj) ShiftOneRect(Peek(rect_obj + kObjectData), sdx, sdy, shifted);
     }
@@ -239,7 +248,6 @@ void ApplyHudLayout() {
 // sub_0007DD50 writes one. this = 0x456830. Args pushed: 0, id, out/val, idx, -1, -1.
 X86_EXTERN_FUNC(sub_0007DD00);
 X86_EXTERN_FUNC(sub_0007DD50);
-bool IsCommittedRange(uint32_t va, uint32_t size);  // defined in carbon.cpp
 
 uint32_t ReadFeVar(const X86Context& base_ctx, uint8_t* base, uint32_t id, uint32_t def_val) {
     X86Context sc = base_ctx;
@@ -654,19 +662,15 @@ X86_FUNC(sub_0019C580) {
 
 // The same stale-origin defect in the remaining Hud_Minimap readers of +0xB4/+0xB8: the target ring
 // (TRACKMAPTARGETRING) and the other map elements they position stay at the unmoved map's origin when the
-// minimap is dragged, because only 158520/158AE0 above were shifted. All three take the minimap in ecx
-// (esi is copied from ecx at entry, and the origin is read via esi) — 15870A's `this` is inferred from the
-// same pattern, it has no direct callers in the recompiled code.
+// minimap is dragged, because only 158520/158AE0 above were shifted. Both take the minimap in ecx
+// (esi is copied from ecx at entry, and the origin is read via esi). NOTE: sub_0015870A is NOT a
+// function start — it is 2-byte NOP padding inside sub_00158520, so it has no direct callers and its
+// hook never fires; the shift for that path happens via the 158520 wrapper. The dead override was
+// removed (pointer audit 2026-11-23).
 X86_EXTERN_FUNC(__imp__sub_001581D0);
 X86_FUNC(sub_001581D0) {
     game::MinimapOriginScope scope(ctx.ecx);
     __imp__sub_001581D0(ctx, base);
-}
-
-X86_EXTERN_FUNC(__imp__sub_0015870A);
-X86_FUNC(sub_0015870A) {
-    game::MinimapOriginScope scope(ctx.ecx);
-    __imp__sub_0015870A(ctx, base);
 }
 
 X86_EXTERN_FUNC(__imp__sub_00165C00);

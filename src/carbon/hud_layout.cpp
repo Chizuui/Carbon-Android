@@ -182,6 +182,98 @@ void ApplyHudLayout() {
     ShiftRoadRects();
 }
 
+// FeVar access (mirrors carbon.cpp's QueryFeVar/SetFeVar): sub_0007DD00 reads a feature var,
+// sub_0007DD50 writes one. this = 0x456830. Args pushed: 0, id, out/val, idx, -1, -1.
+X86_EXTERN_FUNC(sub_0007DD00);
+X86_EXTERN_FUNC(sub_0007DD50);
+bool IsCommittedRange(uint32_t va, uint32_t size);  // defined in carbon.cpp
+
+uint32_t ReadFeVar(const X86Context& base_ctx, uint8_t* base, uint32_t id, uint32_t def_val) {
+    X86Context sc = base_ctx;
+    uint32_t out_va = sc.esp - 16u;
+    if (!IsCommittedRange(out_va - 0x400u, 0x410u)) return def_val;
+    kernel::W32(out_va, def_val);
+    sc.esp = out_va;
+    sc.ecx = 0x456830u;
+    auto push32 = [&](uint32_t v) {
+        sc.esp -= 4u;
+        kernel::W32(sc.esp, v);
+    };
+    push32(0xFFFFFFFFu);
+    push32(0xFFFFFFFFu);
+    push32(0xFFFFFFFFu);
+    push32(out_va);
+    push32(id);
+    push32(0u);
+    sub_0007DD00(sc, base);
+    return kernel::R32(out_va);
+}
+
+void WriteFeVar(const X86Context& base_ctx, uint8_t* base, uint32_t id, uint32_t val) {
+    X86Context sc = base_ctx;
+    sc.esp -= 16u;
+    if (!IsCommittedRange(sc.esp - 0x400u, 0x400u)) return;
+    sc.ecx = 0x456830u;
+    auto push32 = [&](uint32_t v) {
+        sc.esp -= 4u;
+        kernel::W32(sc.esp, v);
+    };
+    push32(0xFFFFFFFFu);
+    push32(0xFFFFFFFFu);
+    push32(0xFFFFFFFFu);
+    push32(val);
+    push32(id);
+    push32(0u);
+    sub_0007DD50(sc, base);
+}
+
+// Free roam / pursuit have no race route, so sub_00158520's gate exits early (the 0xBCD FeVar holds
+// the "no route" sentinel 0x99C27E3B) and no road data is built, leaving [esi+0x164]==0 so 158AE0
+// draws nothing — the empty minimap. The rebuild itself does not need a route: it walks the world
+// road graph (0x4B612C/0x4B6170/0x4B6174, never reads the route id in the loop) and only stores the
+// route id into [esi+0x15C]. So when there is no route, lend the rebuild a dummy route id for the
+// call only: set the 0xBCD FeVar to a non-sentinel value, call the original (which builds the roads),
+// restore the sentinel. The dummy is a constant, so the rebuild behaves exactly like a race with a
+// constant route id — the capacity check, not a route change, drives updates as the player drives.
+// The FeVar is restored before the hook returns, so no other code ever sees the dummy. Only activates
+// when the road-object array is populated (the world is loaded and there are roads to draw); otherwise
+// the map stays empty as before. If the 0xBC3 gate (==0x0C) also fires, the bypass silently does
+// nothing (map stays empty, no crash). RE 2026-11-23.
+struct NoRouteRoadScope {
+    X86Context ctx;
+    uint8_t* base = nullptr;
+    bool active = false;
+    static constexpr uint32_t kRouteVar = 0xBCD;
+    static constexpr uint32_t kNoRouteSentinel = 0x99C27E3B;
+    static constexpr uint32_t kDummyRoute = 0x524F4144;  // "ROAD", not a real route hash
+
+    explicit NoRouteRoadScope(const X86Context& c, uint8_t* b) : ctx(c), base(b) {
+        uint32_t cur = ReadFeVar(ctx, base, kRouteVar, 0u);
+        if (cur != kNoRouteSentinel) return;  // real route (or unreadable): leave alone
+        if (!RoadArrayPopulated()) return;    // no road network loaded: nothing to draw
+        WriteFeVar(ctx, base, kRouteVar, kDummyRoute);
+        active = true;
+        static int logged = 0;
+        if (logged < 8) {
+            LOGR("minimap: no route, lending dummy route id for road build");
+            logged++;
+        }
+    }
+
+    ~NoRouteRoadScope() {
+        if (!active) return;
+        WriteFeVar(ctx, base, kRouteVar, kNoRouteSentinel);
+    }
+
+    static bool RoadArrayPopulated() {
+        constexpr uint32_t kRoadArray = 0x46AB28;
+        for (int i = 0; i < 30; i++) {
+            if (Peek(kRoadArray + uint32_t(i) * 0x14u)) return true;
+        }
+        return false;
+    }
+};
+
 struct MinimapOriginScope {
     uint32_t obj = 0;
     float orig_x = 0.0f, orig_y = 0.0f;
@@ -227,6 +319,7 @@ X86_FUNC(sub_00158520) {
     static int n_158520 = 0;
     if ((++n_158520 % 600) == 1) LOGR("minimap: sub_00158520 entry #%d", n_158520);
     game::MinimapOriginScope scope(ctx.ecx);
+    game::NoRouteRoadScope route(ctx, base);
     __imp__sub_00158520(ctx, base);
 }
 
@@ -245,6 +338,7 @@ X86_FUNC(sub_00158AE0) {
 // same pattern, it has no direct callers in the recompiled code.
 X86_EXTERN_FUNC(__imp__sub_001581D0);
 X86_FUNC(sub_001581D0) {
+    game::MinimapOriginScope scope(ctx.ecx);
     __imp__sub_001581D0(ctx, base);
 }
 

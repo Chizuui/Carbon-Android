@@ -156,6 +156,39 @@ struct MinimapOriginScope {
     }
 };
 
+// The "double map": sub_00158AE0 draws a second set of lines (the street grid) positioned via a FEng
+// object's rect, read with sub_0011AB70 from the object at minimap+0x30 — NOT through the package walk
+// ApplyHudLayout uses, so that object is never moved and its lines land at the original (unshifted)
+// origin (top-left) while the origin-based route lands at the shifted origin (main minimap). Shift that
+// object's data position (the same data+0x1C/+0x20 Move() shifts) for the call, like MinimapOriginScope.
+struct MinimapRectScope {
+    uint32_t data = 0;
+    float orig_x = 0.0f, orig_y = 0.0f;
+    bool active = false;
+
+    explicit MinimapRectScope(uint32_t minimap) {
+        if (!minimap || !mem::IsCommitted(minimap + 0x30u) || !mem::IsCommitted(minimap + 0x33u)) return;
+        uint32_t obj = kernel::R32(minimap + 0x30u);
+        if (!obj || !mem::IsCommitted(obj + 0x2Cu) || !mem::IsCommitted(obj + 0x2Fu)) return;
+        data = kernel::R32(obj + 0x2Cu);
+        if (!data || !mem::IsCommitted(data + 0x1Cu) || !mem::IsCommitted(data + 0x23u)) return;
+        float dx = g_hud_x[kHudMinimap].load(std::memory_order_relaxed);
+        float dy = g_hud_y[kHudMinimap].load(std::memory_order_relaxed);
+        if (dx == 0.0f && dy == 0.0f) return;
+        orig_x = Float(data + 0x1Cu);
+        orig_y = Float(data + 0x20u);
+        SetFloat(data + 0x1Cu, orig_x + dx);
+        SetFloat(data + 0x20u, orig_y + dy);
+        active = true;
+    }
+
+    ~MinimapRectScope() {
+        if (!active) return;
+        SetFloat(data + 0x1Cu, orig_x);
+        SetFloat(data + 0x20u, orig_y);
+    }
+};
+
 }  // namespace game
 
 // FEngine::UpdateAllPackages (thiscall, 0 args): called by cFEng::Service (0x14D990) after HUD elements write
@@ -183,6 +216,7 @@ X86_FUNC(sub_00158AE0) {
     static int n_158ae0 = 0;
     if ((++n_158ae0 % 600) == 1) LOGR("minimap: sub_00158AE0 entry #%d", n_158ae0);
     game::MinimapOriginScope scope(ctx.ecx);
+    game::MinimapRectScope rect(ctx.ecx);
     __imp__sub_00158AE0(ctx, base);
 }
 
@@ -194,6 +228,7 @@ X86_FUNC(sub_00158AE0) {
 X86_EXTERN_FUNC(__imp__sub_001581D0);
 X86_FUNC(sub_001581D0) {
     game::MinimapOriginScope scope(ctx.ecx);
+    game::MinimapRectScope rect(ctx.ecx);
     __imp__sub_001581D0(ctx, base);
 }
 

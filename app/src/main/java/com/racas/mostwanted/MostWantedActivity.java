@@ -379,26 +379,44 @@ public class MostWantedActivity extends SDLActivity {
 
     // Share the exported log file(s) with the Android share sheet (Discord, Telegram, ...).
     // Called from native code after EXPORT LOG copies the file(s); currentPath is the current
-    // run's log, prevPath the previous session's log (empty when there is none). The files are
-    // shared through FileProvider, since file:// URIs are blocked since Android 7.
+    // run's log, prevPath the previous session's log (empty when there is none). Both logs go
+    // into one zip next to them in Download, and the zip is what gets shared — one file, so
+    // the receiver gets the whole session (including the crashed one) in a single attachment.
+    // The zip is shared through FileProvider, since file:// URIs are blocked since Android 7.
     public void shareLogFiles(String currentPath, String prevPath) {
         runOnUiThread(() -> {
             try {
-                ArrayList<Uri> uris = new ArrayList<>();
-                String authority = getPackageName() + ".fileprovider";
-                if (currentPath != null && !currentPath.isEmpty())
-                    uris.add(FileProvider.getUriForFile(this, authority, new File(currentPath)));
-                if (prevPath != null && !prevPath.isEmpty())
-                    uris.add(FileProvider.getUriForFile(this, authority, new File(prevPath)));
-                if (uris.isEmpty()) return;
-                Intent send = new Intent(uris.size() > 1 ? Intent.ACTION_SEND_MULTIPLE : Intent.ACTION_SEND);
-                send.setType("text/plain");
-                if (uris.size() > 1) send.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
-                else send.putExtra(Intent.EXTRA_STREAM, uris.get(0));
+                ArrayList<File> files = new ArrayList<>();
+                if (currentPath != null && !currentPath.isEmpty()) files.add(new File(currentPath));
+                if (prevPath != null && !prevPath.isEmpty()) files.add(new File(prevPath));
+                if (files.isEmpty()) return;
+                // Zip name from the current log's name (carbon-log-YYYYMMDD-HHMMSS.zip), so the
+                // zip sits next to the logs it contains; fall back to the prev log's name.
+                File first = files.get(0);
+                String base = first.getName();
+                if (base.endsWith(".log")) base = base.substring(0, base.length() - 4);
+                File zip = new File(first.getParentFile(), base + ".zip");
+                try (java.util.zip.ZipOutputStream zos =
+                             new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(zip))) {
+                    byte[] buf = new byte[8192];
+                    for (File f : files) {
+                        if (!f.exists()) continue;
+                        zos.putNextEntry(new java.util.zip.ZipEntry(f.getName()));
+                        try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+                            int n;
+                            while ((n = in.read(buf)) > 0) zos.write(buf, 0, n);
+                        }
+                        zos.closeEntry();
+                    }
+                }
+                Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", zip);
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType("application/zip");
+                send.putExtra(Intent.EXTRA_STREAM, uri);
                 send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 startActivity(Intent.createChooser(send, "Share log"));
             } catch (Exception e) {
-                // no app to share with, or the file is gone: the copy in Download is still there
+                // no app to share with, or the file is gone: the copies in Download are still there
                 Toast.makeText(this, "Cannot share log", Toast.LENGTH_SHORT).show();
             }
         });

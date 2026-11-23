@@ -76,10 +76,11 @@ std::atomic<bool> g_open{false};
 
 #ifdef __ANDROID__
 // Open the Android share sheet for the exported log file(s), so the player can send the log
-// straight to Discord, Telegram, ... The Java side (MostWantedActivity.shareLogFiles) builds the
-// ACTION_SEND intent and shows the chooser. SDL_GetAndroidJNIEnv attaches this thread to the JVM
-// when needed, and SDL_GetAndroidActivity returns the activity (MostWantedActivity). A missing
-// method or a null env/activity just means no share sheet; the Download copy is the fallback.
+// straight to Discord, Telegram, ... The Java side (MostWantedActivity.shareLogFiles) zips the
+// current and previous logs into one file and shares the zip through an ACTION_SEND intent.
+// SDL_GetAndroidJNIEnv attaches this thread to the JVM when needed, and SDL_GetAndroidActivity
+// returns the activity (MostWantedActivity). A missing method or a null env/activity just means
+// no share sheet; the Download copies are the fallback.
 void ShareLogFiles(const std::string& current, const std::string& prev) {
     JNIEnv* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
     jobject activity = static_cast<jobject>(SDL_GetAndroidActivity());

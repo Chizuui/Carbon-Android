@@ -361,7 +361,33 @@ X86_FUNC(sub_00158520) {
     game::g_minimap_obj = ctx.ecx;  // cache for ShiftRoadRects' minimap+0x30 rect object
     game::MinimapOriginScope scope(ctx.ecx);
     game::NoRouteRoadScope route(ctx, base);
+    // Diagnostic (2026-11-23): the getter-hook bypass passes the gate (hook fired 8x in the log)
+    // but 0 segments are built — 158AE0 never runs and 1849F0 is never called (the 19C670/19C580
+    // NULL guards were never hit), so the tail's `segments>0` check at guest 0x1589A2 fails. The
+    // post-gate walk is skipped entirely when the road-graph node count [0x4B612C]==0 (guest
+    // 0x158698 `jbe 0x158ACB`), or builds 0 segments when every node fails the flag filter at
+    // +0x0A (bit15 set, bit11 clear, guest 0x1586C6/0x1586D3). Log the graph state the walk sees,
+    // plus the [esi+0x164] flag after the call (1 = segments were built, 0 = the walk produced
+    // nothing). Free roam only (no route FeVar), first 4 activations. The next log decides the
+    // fix: nodes==0 means the graph is not loaded in free roam (call the loader sub_002BDE50);
+    // nodes>0 with [esi+0x164]==0 means the filter rejects every node (route-marking problem).
+    static int probed = 0;
+    bool probe = false;
+    if (probed < 4) {
+        uint32_t cur = game::ReadFeVar(ctx, base, 0xBCDu, 0u);
+        probe = (cur == 0u || cur == 0x99C27E3Bu);
+        if (probe) {
+            LOGR("minimap: road graph nodes=%u nodes_ptr=%08X pos_ptr=%08X loaded=%08X",
+                 game::Peek(0x4B612Cu), game::Peek(0x4B6174u), game::Peek(0x4B6170u), game::Peek(0x4B6168u));
+        }
+    }
     __imp__sub_00158520(ctx, base);
+    if (probe) {
+        uint32_t mm = game::g_minimap_obj;
+        uint32_t flag = (mm && mem::IsCommitted(mm + 0x164u)) ? (game::Peek(mm + 0x164u) & 0xFFu) : 0xFFFFFFFFu;
+        LOGR("minimap: after rebuild, [esi+0x164]=%u", flag);
+        probed++;
+    }
 }
 
 X86_EXTERN_FUNC(__imp__sub_00158AE0);

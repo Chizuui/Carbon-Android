@@ -596,6 +596,10 @@ static uint32_t PickFallbackCarHandle(uint32_t car_db, uint32_t h1b60) {
     return 0;
 }
 
+// Forward: the lock-table helper is defined with the buy-car unlock below; the career repair
+// in sub_00242FD0 uses it to restore cars bought while UNLOCK ALL was on.
+static void LockTableOp(const X86Context& base_ctx, uint8_t* base, uint32_t table, uint32_t id, bool insert);
+
 X86_FUNC(sub_00242FD0) {
     uint32_t sys = game::IsCommittedRange(game::kCareerRoot, 4) ? kernel::R32(game::kCareerRoot) : 0;
     uint32_t count = game::IsCommittedRange(sys + 0xD8u, 4) ? kernel::R32(sys + 0xD8u) : 0;
@@ -640,6 +644,40 @@ X86_FUNC(sub_00242FD0) {
                         }
                     }
                     if (!found) LOGR("career: handle %08X not found in career+0..0x3000", h);
+                }
+            }
+        }
+        // Retroactive unlock for cars bought while UNLOCK ALL was on: those purchases never got
+        // their type into the lock table (the buy-path fix only runs for purchases made after it
+        // landed), so with the cheat removed the car-select listing hides them — the tester reports
+        // the cars "ikut ilang" (gone with the cheat). The lock table is global and the insert is
+        // the same op the buy path does (8A4C0 insert, then 8A530 clear). Run once per career
+        // address: walk every car_db slot, and for each slot with a real handle (not 0, not
+        // 0xFFFFFFFF, not the 0x12345678 placeholder) and a non-zero type, unlock that type. This
+        // does not create cars or fix the type registration — it only makes cars the save already
+        // owns visible again in the listing. Runs here (242FD0) because it already resolves the
+        // career + car_db; the cars appear in the listing from the next garage visit after the
+        // first race load (242FD0 fires at race load, after the garage first opens).
+        {
+            static uint32_t last_unlocked_career = 0;
+            if (career != last_unlocked_career) {
+                last_unlocked_career = career;
+                if (game::IsCommittedRange(0x45680Cu, 4)) {
+                    uint32_t lock_table = kernel::R32(0x45680Cu);
+                    if (lock_table) {
+                        int unlocked = 0;
+                        for (uint32_t i = 0; i < 0xC8u; i++) {
+                            uint32_t slot = car_db + i * 0x14u;
+                            uint32_t h = kernel::R32(slot);
+                            if (h == 0 || h == 0xFFFFFFFFu || h == 0x12345678u) continue;
+                            uint32_t type = kernel::R32(slot + 8u);
+                            if (!type) continue;
+                            LockTableOp(ctx, base, lock_table, type, true);
+                            LockTableOp(ctx, base, lock_table, type, false);
+                            unlocked++;
+                        }
+                        if (unlocked) LOGR("career: retro unlock %d car types in lock table (career=%08X)", unlocked, career);
+                    }
                 }
             }
         }

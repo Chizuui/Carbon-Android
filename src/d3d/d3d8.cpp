@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <map>
 #include <set>
@@ -1562,6 +1563,144 @@ uint32_t UpVertices(const void* src, uint32_t bytes) {
     return g_up_header;
 }
 
+// Headlight road pool: a light cone on the road ahead of the player's headlight, drawn as a
+// pre-transformed (RHW) quad with a fading vertex colour, additive, no texture. Carbon never
+// calls D3DDevice_SetLight (0 "d3d: light" lines in every log), so the port's D3D light path
+// cannot light the road — the headlight beam is missing entirely. This synthesizes it from
+// the flare pass's fan centres (the headlight world positions) and the view matrix.
+float g_pool_fans[8][3];
+int g_pool_fan_count = 0;
+
+void DrawHeadlightPool() {
+    if (!g_backend || g_pool_fan_count == 0) return;
+    // camera from the view matrix (g_state.transforms[2], row-major, world->view):
+    // row 0 = right, row 2 = backward, so forward = -row 2
+    const float* V = g_state.transforms[2].data();
+    const float* P = g_state.transforms[3].data();
+    float fwd[3] = {-V[8], -V[9], -V[10]};
+    float right[3] = {V[0], V[1], V[2]};
+    float fl = std::sqrt(fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]);
+    float rl = std::sqrt(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
+    if (fl < 1e-6f || rl < 1e-6f) {
+        g_pool_fan_count = 0;
+        return;
+    }
+    fwd[0] /= fl;
+    fwd[1] /= fl;
+    fwd[2] /= fl;
+    right[0] /= rl;
+    right[1] /= rl;
+    right[2] /= rl;
+    // camera position = -R^T * t
+    float tx = V[12], ty = V[13], tz = V[14];
+    float cam[3] = {-(V[0] * tx + V[4] * ty + V[8] * tz), -(V[1] * tx + V[5] * ty + V[9] * tz),
+                    -(V[2] * tx + V[6] * ty + V[10] * tz)};
+    // the player's headlight: the fan centre closest to the camera and ahead of it
+    float best = 1e30f;
+    const float* H = nullptr;
+    for (int i = 0; i < g_pool_fan_count; i++) {
+        const float* c = g_pool_fans[i];
+        float d[3] = {c[0] - cam[0], c[1] - cam[1], c[2] - cam[2]};
+        float ahead = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
+        if (ahead <= 0) continue;
+        float dist = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        if (dist < best) {
+            best = dist;
+            H = c;
+        }
+    }
+    if (!H || best > 60.0f) {
+        g_pool_fan_count = 0;
+        return;
+    }
+    float road_y = H[1] - 1.0f;  // headlight ~1 unit above the road
+    float near_d = 2.0f, far_d = 35.0f, near_w = 1.5f, far_w = 6.0f;
+    float corners[4][3];
+    // near-left, near-right, far-right, far-left (fan order: (0,1,2),(0,2,3))
+    for (int i = 0; i < 4; i++) {
+        float d = (i < 2) ? near_d : far_d;
+        float w = (i < 2) ? near_w : far_w;
+        float s = (i == 0 || i == 3) ? -w : w;  // left for v0,v3; right for v1,v2
+        corners[i][0] = H[0] + fwd[0] * d + right[0] * s;
+        corners[i][1] = road_y + 0.15f;
+        corners[i][2] = H[2] + fwd[2] * d + right[2] * s;
+    }
+    // world -> clip (row vector: p * View * Proj), then NDC -> screen (RHW)
+    float vw = float(g_state.viewport.w), vh = float(g_state.viewport.h);
+    float vx = float(g_state.viewport.x), vy = float(g_state.viewport.y);
+    if (vw <= 0 || vh <= 0) {
+        g_pool_fan_count = 0;
+        return;
+    }
+    struct PoolVert {
+        float x, y, z, rhw;
+        uint32_t color;
+    };
+    PoolVert verts[4];
+    for (int i = 0; i < 4; i++) {
+        float p[4] = {corners[i][0], corners[i][1], corners[i][2], 1.0f};
+        float pv[4] = {};
+        for (int j = 0; j < 4; j++) pv[j] = p[0] * V[j] + p[1] * V[4 + j] + p[2] * V[8 + j] + p[3] * V[12 + j];
+        float clip[4] = {};
+        for (int j = 0; j < 4; j++)
+            clip[j] = pv[0] * P[j] + pv[1] * P[4 + j] + pv[2] * P[8 + j] + pv[3] * P[12 + j];
+        if (clip[3] <= 1e-6f) {
+            g_pool_fan_count = 0;
+            return;
+        }
+        float ndc_x = clip[0] / clip[3], ndc_y = clip[1] / clip[3], ndc_z = clip[2] / clip[3];
+        verts[i].x = (ndc_x + 1.0f) * 0.5f * vw + vx;
+        verts[i].y = (1.0f - ndc_y) * 0.5f * vh + vy;
+        verts[i].z = std::clamp(ndc_z, 0.0f, 1.0f);
+        verts[i].rhw = 1.0f;
+        // bright warm white at the near edge, transparent at the far edge
+        verts[i].color = (i < 2) ? 0xFFFFE6BEu : 0x00FFE6BEu;
+    }
+    static int pool_logs = 0;
+    if (pool_logs < 4) {
+        pool_logs++;
+        LOGR("d3d: headlight pool H (%.1f, %.1f, %.1f) cam (%.1f, %.1f, %.1f) fwd (%.2f, %.2f, %.2f) screen "
+             "%.0f,%.0f %.0f,%.0f %.0f,%.0f %.0f,%.0f",
+             H[0], H[1], H[2], cam[0], cam[1], cam[2], fwd[0], fwd[1], fwd[2], verts[0].x, verts[0].y, verts[1].x,
+             verts[1].y, verts[2].x, verts[2].y, verts[3].x, verts[3].y);
+    }
+    // draw it: fixed-function RHW quad, no texture, no pixel shader (diffuse colour only),
+    // additive (SRC_ALPHA, ONE), no depth write
+    auto saved_vs_handle = g_state.vs_handle;
+    auto saved_vs = g_state.vs;
+    auto saved_ps = g_state.ps;
+    uint32_t saved_tex0 = g_state.textures[0];
+    uint32_t saved_tss0 = g_state.tss[0][gpu::kTssColorOp];
+    uint32_t saved_blend = g_state.simple[gpu::kMBlendEnable >> 2];
+    uint32_t saved_src = g_state.simple[gpu::kMSrcBlend >> 2];
+    uint32_t saved_dst = g_state.simple[gpu::kMDestBlend >> 2];
+    uint32_t saved_zw = g_state.simple[gpu::kMZWriteEnable >> 2];
+    auto saved_stream = g_state.streams[0];
+    g_state.vs_handle = 0x044;  // D3DFVF_XYZRHW | D3DFVF_DIFFUSE
+    g_state.vs = nullptr;
+    g_state.ps = nullptr;
+    g_state.textures[0] = 0;
+    g_state.tss[0][gpu::kTssColorOp] = 1;  // D3DTOP_DISABLE
+    g_state.simple[gpu::kMBlendEnable >> 2] = 1;
+    g_state.simple[gpu::kMSrcBlend >> 2] = 0x302;  // SRC_ALPHA
+    g_state.simple[gpu::kMDestBlend >> 2] = 1;     // ONE
+    g_state.simple[gpu::kMZWriteEnable >> 2] = 0;
+    g_state.streams[0] = {UpVertices(verts, sizeof(verts)), 20};
+    CountTarget(false, 4);
+    g_backend->Draw(g_state, 7, 0, 4, nullptr);
+    g_state.streams[0] = saved_stream;
+    g_state.simple[gpu::kMZWriteEnable >> 2] = saved_zw;
+    g_state.simple[gpu::kMDestBlend >> 2] = saved_dst;
+    g_state.simple[gpu::kMSrcBlend >> 2] = saved_src;
+    g_state.simple[gpu::kMBlendEnable >> 2] = saved_blend;
+    g_state.tss[0][gpu::kTssColorOp] = saved_tss0;
+    g_state.textures[0] = saved_tex0;
+    g_state.ps = saved_ps;
+    g_state.vs = saved_vs;
+    g_state.vs_handle = saved_vs_handle;
+    g_pool_fan_count = 0;
+}
+
 void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride) {
     if (!g_backend || !count || !stride) return;
     SyncDeferred();
@@ -1612,6 +1751,21 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                     float f[3];
                     std::memcpy(f, b + i * stride, 12);
                     LOGR("d3d: flare v%u %.2f %.2f %.2f", i, f[0], f[1], f[2]);
+                }
+                // headlight pool: remember this fan's centre (a light's world position)
+                if (prim == 7 && count == 4 && stride == 32 && g_pool_fan_count < 8) {
+                    float cx = 0, cy = 0, cz = 0;
+                    for (uint32_t i = 0; i < 4; i++) {
+                        float f[3];
+                        std::memcpy(f, b + i * stride, 12);
+                        cx += f[0];
+                        cy += f[1];
+                        cz += f[2];
+                    }
+                    g_pool_fans[g_pool_fan_count][0] = cx * 0.25f;
+                    g_pool_fans[g_pool_fan_count][1] = cy * 0.25f;
+                    g_pool_fans[g_pool_fan_count][2] = cz * 0.25f;
+                    g_pool_fan_count++;
                 }
                 // the fan's world positions are sane (a small quad around the light), so if it renders as
                 // static the vertex-shader transform is suspect: dump the view-projection candidate
@@ -1704,6 +1858,9 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
         }
         float w = maxx - minx, h = maxy - miny;
         if (vw > 0 && vh > 0 && w >= vw * 0.9f && h >= vh * 0.4f) {
+            // the flare pass ends here: draw the synthesized headlight pool on the road
+            // (the game never sets a D3D light, so nothing else lights the road), then skip
+            DrawHeadlightPool();
             return;
         }
     }

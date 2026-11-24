@@ -1576,14 +1576,28 @@ void DrawHeadlightPool() {
         g_pool_vp_valid = false;
         return;
     }
-    if (!g_pool_vp_valid) return;
+    if (!g_pool_vp_valid) {
+        static int no_vp_logs = 0;
+        if (no_vp_logs < 4) {
+            no_vp_logs++;
+            LOGR("d3d: headlight pool: no VP captured yet");
+        }
+        return;
+    }
 
     const float* VP = g_pool_vp;
     float a = VP[0], b = VP[1], c = VP[2];
     float d = VP[4], e = VP[5], f = VP[6];
     float g = VP[12], h = VP[13], i = VP[14];
     float det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-    if (std::fabs(det) < 1e-9f) return;
+    if (std::fabs(det) < 1e-9f) {
+        static int bad_det_logs = 0;
+        if (bad_det_logs < 4) {
+            bad_det_logs++;
+            LOGR("d3d: headlight pool: singular VP (det %.6f)", det);
+        }
+        return;
+    }
 
     float inv[3][3] = {{(e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det},
                        {(f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det},
@@ -1598,7 +1612,14 @@ void DrawHeadlightPool() {
     }
     float fwd[3] = {pt[0] - cam[0], pt[1] - cam[1], pt[2] - cam[2]};
     float fl = std::sqrt(fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]);
-    if (fl < 1e-6f) return;
+    if (fl < 1e-6f) {
+        static int bad_fwd_logs = 0;
+        if (bad_fwd_logs < 4) {
+            bad_fwd_logs++;
+            LOGR("d3d: headlight pool: degenerate fwd (fl %.6f)", fl);
+        }
+        return;
+    }
     fwd[0] /= fl;
     fwd[1] /= fl;
     fwd[2] /= fl;
@@ -1626,45 +1647,63 @@ void DrawHeadlightPool() {
     float vx = float(g_state.viewport.x), vy = float(g_state.viewport.y);
     if (vw <= 0 || vh <= 0) return;
 
-    // 4x3 grid along the road ahead: soft edges (outer columns alpha 0) and bright warm-white core.
-    constexpr float kDist[4] = {5.5f, 14.0f, 38.0f, 75.0f};
-    constexpr float kHalfW[4] = {1.8f, 4.2f, 8.5f, 14.0f};
-    constexpr uint32_t kCenterAlpha[4] = {0x40u, 0xB8u, 0x60u, 0x00u};
-    constexpr uint32_t kWarmRgb = 0x00FFEED0u;
+    // 4x5 dual-beam grid along the road ahead: starts in front of the bumper, bright dual cores,
+    // soft outer/far falloff to alpha 0.
+    constexpr float kDist[4] = {7.0f, 16.0f, 40.0f, 80.0f};
+    constexpr float kHalfW[4] = {2.4f, 5.5f, 11.0f, 17.0f};
+    constexpr float kColX[5] = {-1.0f, -0.35f, 0.0f, 0.35f, 1.0f};
+    constexpr float kColW[5] = {0.0f, 1.0f, 0.85f, 1.0f, 0.0f};
+    constexpr uint32_t kRowAlpha[4] = {0x38u, 0xD0u, 0x78u, 0x00u};
+    constexpr uint32_t kWarmRgb = 0x00FFEED8u;
 
     struct PoolVert {
         float x, y, z, rhw;
         uint32_t color;
     };
-    PoolVert grid[4][3];
+    PoolVert grid[4][5];
     for (int r = 0; r < 4; r++) {
         float d_r = kDist[r];
         float w_r = kHalfW[r];
-        float z_r = cam[2] - 1.65f + fwd[2] * d_r;
-        for (int c_idx = 0; c_idx < 3; c_idx++) {
-            float side = (c_idx == 0) ? -w_r : (c_idx == 2 ? w_r : 0.0f);
+        float z_r = cam[2] - 1.85f + fwd[2] * d_r;
+        for (int c_idx = 0; c_idx < 5; c_idx++) {
+            float side = w_r * kColX[c_idx];
             float p[4] = {cam[0] + fwd[0] * d_r + right[0] * side,
                           cam[1] + fwd[1] * d_r + right[1] * side,
                           z_r, 1.0f};
             float clip[4] = {};
             for (int j = 0; j < 4; j++)
                 clip[j] = p[0] * VP[j * 4 + 0] + p[1] * VP[j * 4 + 1] + p[2] * VP[j * 4 + 2] + p[3] * VP[j * 4 + 3];
-            if (clip[3] <= 0.1f) return;
+            if (clip[3] <= 0.1f) {
+                static int clip_logs = 0;
+                if (clip_logs < 4) {
+                    clip_logs++;
+                    LOGR("d3d: headlight pool: behind near plane r=%d c=%d w=%.3f", r, c_idx, clip[3]);
+                }
+                return;
+            }
             float ndc_x = clip[0] / clip[3], ndc_y = clip[1] / clip[3], ndc_z = clip[2] / clip[3];
             grid[r][c_idx].x = (ndc_x + 1.0f) * 0.5f * vw + vx;
             grid[r][c_idx].y = (1.0f - ndc_y) * 0.5f * vh + vy;
             grid[r][c_idx].z = std::clamp(ndc_z, 0.0f, 1.0f);
             grid[r][c_idx].rhw = 1.0f;
-            uint32_t alpha = (c_idx == 1) ? kCenterAlpha[r] : 0u;
+            uint32_t alpha = uint32_t(float(kRowAlpha[r]) * kColW[c_idx] + 0.5f);
             grid[r][c_idx].color = (alpha << 24) | kWarmRgb;
         }
     }
 
-    // 3 rows x 2 quads = 6 quads = 12 triangles = 36 vertices (D3DPT_TRIANGLELIST)
-    PoolVert verts[36];
+    static int pool_logs = 0;
+    if (pool_logs < 4) {
+        pool_logs++;
+        LOGR("d3d: headlight pool cam=(%.1f,%.1f,%.1f) fwd=(%.2f,%.2f,%.2f) near=(%.0f,%.0f) far=(%.0f,%.0f)",
+             cam[0], cam[1], cam[2], fwd[0], fwd[1], fwd[2],
+             grid[1][2].x, grid[1][2].y, grid[3][2].x, grid[3][2].y);
+    }
+
+    // 3 rows x 4 quads = 12 quads = 24 triangles = 72 vertices (D3DPT_TRIANGLELIST)
+    PoolVert verts[72];
     int vi = 0;
     for (int r = 0; r < 3; r++) {
-        for (int c_idx = 0; c_idx < 2; c_idx++) {
+        for (int c_idx = 0; c_idx < 4; c_idx++) {
             const PoolVert& v00 = grid[r][c_idx];
             const PoolVert& v01 = grid[r][c_idx + 1];
             const PoolVert& v10 = grid[r + 1][c_idx];
@@ -1683,11 +1722,16 @@ void DrawHeadlightPool() {
     auto saved_ps = g_state.ps;
     uint32_t saved_tex0 = g_state.textures[0];
     uint32_t saved_tss0 = g_state.tss[0][gpu::kTssColorOp];
+    uint32_t saved_cull = g_state.rs[gpu::kRsCullMode];
+    uint32_t saved_zen = g_state.rs[gpu::kRsZEnable];
+    uint32_t saved_sten = g_state.rs[gpu::kRsStencilEnable];
+    uint32_t saved_fog = g_state.rs[gpu::kRsFogEnable];
+    uint32_t saved_atest = g_state.simple[gpu::kMAlphaTestEnable >> 2];
+    uint32_t saved_cwrite = g_state.simple[gpu::kMColorWriteEnable >> 2];
     uint32_t saved_blend = g_state.simple[gpu::kMBlendEnable >> 2];
     uint32_t saved_src = g_state.simple[gpu::kMSrcBlend >> 2];
     uint32_t saved_dst = g_state.simple[gpu::kMDestBlend >> 2];
-    uint32_t saved_zen = g_state.rs[gpu::kRsZEnable];
-    uint32_t saved_zfunc = g_state.simple[gpu::kMZFunc >> 2];
+    uint32_t saved_bop = g_state.simple[gpu::kMBlendOp >> 2];
     uint32_t saved_zw = g_state.simple[gpu::kMZWriteEnable >> 2];
     auto saved_stream = g_state.streams[0];
 
@@ -1696,23 +1740,33 @@ void DrawHeadlightPool() {
     g_state.ps = nullptr;
     g_state.textures[0] = 0;
     g_state.tss[0][gpu::kTssColorOp] = 1;  // D3DTOP_DISABLE
+    g_state.rs[gpu::kRsCullMode] = 0;
+    g_state.rs[gpu::kRsZEnable] = 0;
+    g_state.rs[gpu::kRsStencilEnable] = 0;
+    g_state.rs[gpu::kRsFogEnable] = 0;
+    g_state.simple[gpu::kMAlphaTestEnable >> 2] = 0;
+    g_state.simple[gpu::kMColorWriteEnable >> 2] = 0x01010101u;
     g_state.simple[gpu::kMBlendEnable >> 2] = 1;
     g_state.simple[gpu::kMSrcBlend >> 2] = 0x302;  // SRC_ALPHA
     g_state.simple[gpu::kMDestBlend >> 2] = 1;     // ONE
-    g_state.rs[gpu::kRsZEnable] = 1;
-    g_state.simple[gpu::kMZFunc >> 2] = 0x203;  // LESSEQUAL
+    g_state.simple[gpu::kMBlendOp >> 2] = 0x8006;  // ADD
     g_state.simple[gpu::kMZWriteEnable >> 2] = 0;
     g_state.streams[0] = {UpVertices(verts, sizeof(verts)), 20};
-    CountTarget(false, 36);
-    g_backend->Draw(g_state, 5, 0, 36, nullptr);
+    CountTarget(false, 72);
+    g_backend->Draw(g_state, 5, 0, 72, nullptr);
 
     g_state.streams[0] = saved_stream;
     g_state.simple[gpu::kMZWriteEnable >> 2] = saved_zw;
-    g_state.simple[gpu::kMZFunc >> 2] = saved_zfunc;
-    g_state.rs[gpu::kRsZEnable] = saved_zen;
+    g_state.simple[gpu::kMBlendOp >> 2] = saved_bop;
     g_state.simple[gpu::kMDestBlend >> 2] = saved_dst;
     g_state.simple[gpu::kMSrcBlend >> 2] = saved_src;
     g_state.simple[gpu::kMBlendEnable >> 2] = saved_blend;
+    g_state.simple[gpu::kMColorWriteEnable >> 2] = saved_cwrite;
+    g_state.simple[gpu::kMAlphaTestEnable >> 2] = saved_atest;
+    g_state.rs[gpu::kRsFogEnable] = saved_fog;
+    g_state.rs[gpu::kRsStencilEnable] = saved_sten;
+    g_state.rs[gpu::kRsZEnable] = saved_zen;
+    g_state.rs[gpu::kRsCullMode] = saved_cull;
     g_state.tss[0][gpu::kTssColorOp] = saved_tss0;
     g_state.textures[0] = saved_tex0;
     g_state.ps = saved_ps;

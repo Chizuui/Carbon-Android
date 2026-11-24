@@ -395,9 +395,19 @@ public class MostWantedActivity extends SDLActivity {
                 File first = files.get(0);
                 String base = first.getName();
                 if (base.endsWith(".log")) base = base.substring(0, base.length() - 4);
+                // The zip goes beside the log when that folder is writable (Download, or the
+                // logs folder itself). On phones where it is not, fall back to the cache dir —
+                // the share must not die just because the zip cannot sit next to the log.
                 File zip = new File(first.getParentFile(), base + ".zip");
+                java.io.FileOutputStream zipOut = null;
+                try {
+                    zipOut = new java.io.FileOutputStream(zip);
+                } catch (Exception e) {
+                    zip = new File(getCacheDir(), base + ".zip");
+                    zipOut = new java.io.FileOutputStream(zip);
+                }
                 try (java.util.zip.ZipOutputStream zos =
-                             new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(zip))) {
+                             new java.util.zip.ZipOutputStream(zipOut)) {
                     byte[] buf = new byte[8192];
                     for (File f : files) {
                         if (!f.exists()) continue;

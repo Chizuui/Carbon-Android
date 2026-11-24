@@ -157,13 +157,6 @@ void ExportLog() {
         return dst;
     };
     std::filesystem::path dst = copy(src, std::string(kGame.log) + "-log");
-    if (dst.empty()) {
-        g_export_log_status = "FAILED";
-        LOGE("export log: cannot copy %s", src.string().c_str());
-        return;
-    }
-    g_export_log_status = "SAVED";
-    LOGR("export log: %s -> %s", src.string().c_str(), dst.string().c_str());
     std::string prev = logx::PrevPath();
     std::filesystem::path pdst;
     if (!prev.empty()) {
@@ -177,7 +170,20 @@ void ExportLog() {
     // Share sheet: after the copy, offer the file(s) straight to Discord, Telegram, ...
     // instead of making the tester dig the file out of Download. The copies above stay as
     // the fallback when the share sheet cannot open (no app, FileProvider misconfigured).
-    ShareLogFiles(dst.string(), pdst.string());
+    // The share must NOT depend on the Download copy: on several phones the copy fails
+    // (scoped storage, no all-files access) and the row just read FAILED with no popup.
+    // Share the copies when they exist, otherwise the original logs straight from where
+    // they live — the app can always read those, and the FileProvider serves them.
+    std::string share_current = dst.empty() ? src.string() : dst.string();
+    std::string share_prev = pdst.empty() ? prev : pdst.string();
+    if (dst.empty()) {
+        g_export_log_status = "SHARED";
+        LOGR("export log: copy failed, sharing originals %s", src.string().c_str());
+    } else {
+        g_export_log_status = "SAVED";
+        LOGR("export log: %s -> %s", src.string().c_str(), dst.string().c_str());
+    }
+    ShareLogFiles(share_current, share_prev);
 }
 
 // near-black warm panel, gold on dark red kept from the old panel, red only for the active nav and selections

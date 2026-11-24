@@ -1,10 +1,12 @@
 // The title's Direct3D 8 calls drawn with Vulkan 1.1, dynamic rendering and a timeline semaphore. The SDK's
 // translated shaders are HLSL, which glslang turns into SPIR-V (vk_shader.cpp).
-#include <vulkan/vulkan.h>
+#include <volk.h>
+#include <android/native_window.h>
+#include <dlfcn.h>
 #include <pthread.h>
+#include <adrenotools/driver.h>
 
 #include <SDL3/SDL.h>
-#include <SDL3/SDL_vulkan.h>
 
 #include <algorithm>
 #include <array>
@@ -1353,11 +1355,58 @@ std::atomic<float> g_gpu_load{-1};
 
 // ---- Init
 
+bool LoadVulkanDriver() {
+    static bool loaded = false;
+    if (loaded) return true;
+    void* handle = nullptr;
+    const auto& o = game::Opt();
+    if (!o.gpu_driver_dir.empty() && !o.gpu_driver_lib.empty()) {
+        std::string dir = o.gpu_driver_dir;
+        if (dir.back() != '/') dir += '/';
+        std::string so_path = dir + o.gpu_driver_lib;
+        if (std::filesystem::exists(so_path)) {
+            const char* tmp_c = host::DriverTempDir();
+            const char* hook_c = host::NativeLibDir();
+            std::string tmp_dir = tmp_c ? tmp_c : "";
+            std::string hook_dir = hook_c ? hook_c : "";
+            if (!tmp_dir.empty() && tmp_dir.back() != '/') tmp_dir += '/';
+            if (!hook_dir.empty() && hook_dir.back() != '/') hook_dir += '/';
+            handle = adrenotools_open_libvulkan(
+                RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM,
+                tmp_dir.empty() ? nullptr : tmp_dir.c_str(),
+                hook_dir.empty() ? nullptr : hook_dir.c_str(),
+                dir.c_str(), o.gpu_driver_lib.c_str(), nullptr, nullptr);
+            if (handle) {
+                LOGR("vulkan: custom driver loaded: %s (%s)",
+                     o.gpu_driver_name.empty() ? o.gpu_driver_lib.c_str() : o.gpu_driver_name.c_str(),
+                     o.gpu_driver_lib.c_str());
+            } else {
+                LOGE("vulkan: failed to load custom driver %s, falling back to system", so_path.c_str());
+            }
+        } else {
+            LOGE("vulkan: custom driver file missing: %s, falling back to system", so_path.c_str());
+        }
+    }
+    if (!handle) handle = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+    if (!handle) {
+        LOGE("vulkan: dlopen libvulkan.so failed: %s", dlerror());
+        return false;
+    }
+    auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(handle, "vkGetInstanceProcAddr"));
+    if (!gipa) {
+        LOGE("vulkan: vkGetInstanceProcAddr not found in driver");
+        return false;
+    }
+    volkInitializeCustom(gipa);
+    loaded = true;
+    return true;
+}
+
 bool VulkanBackend::Init(uint32_t width, uint32_t height) {
     guest_w_ = width;
     guest_h_ = height;
     vkshader::Init(app::ExeDir() / "shadercache");
-    if (!CreateInstance() || !CreateSurface() || !PickDevice() || !CreateDevice()) return false;
+    if (!LoadVulkanDriver() || !CreateInstance() || !CreateSurface() || !PickDevice() || !CreateDevice()) return false;
     alloc_.Init(pd_, dev_);
     if (!CreateLayouts() || !CreateFrames() || !CreateSwapchain() || !CreateFixedImages()) return false;
     Begin();
@@ -1369,9 +1418,7 @@ bool VulkanBackend::Init(uint32_t width, uint32_t height) {
 }
 
 bool VulkanBackend::CreateInstance() {
-    uint32_t n = 0;
-    const char* const* sdl = SDL_Vulkan_GetInstanceExtensions(&n);
-    std::vector<const char*> exts(sdl, sdl + n);
+    const char* exts[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_ANDROID_SURFACE_EXTENSION_NAME};
     uint32_t loader = VK_API_VERSION_1_1;
     vkEnumerateInstanceVersion(&loader);
     VkApplicationInfo ai{VK_STRUCTURE_TYPE_APPLICATION_INFO};
@@ -1380,9 +1427,10 @@ bool VulkanBackend::CreateInstance() {
     ai.apiVersion = std::min<uint32_t>(loader, VK_API_VERSION_1_3);
     VkInstanceCreateInfo ci{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ci.pApplicationInfo = &ai;
-    ci.enabledExtensionCount = uint32_t(exts.size());
-    ci.ppEnabledExtensionNames = exts.data();
+    ci.enabledExtensionCount = 2;
+    ci.ppEnabledExtensionNames = exts;
     VK_CHECK(vkCreateInstance(&ci, nullptr, &instance_));
+    volkLoadInstance(instance_);
     return true;
 }
 
@@ -1392,13 +1440,17 @@ bool VulkanBackend::CreateSurface() {
     // Android has not handed the window back yet (resuming, or a surface change): wait for it without asking SDL,
     // which only fails, and log the outage once, not every present
     SDL_PropertiesID props = SDL_GetWindowProperties(host::Window());
-    if (!SDL_GetPointerProperty(props, SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr)) {
+    auto* win = static_cast<ANativeWindow*>(SDL_GetPointerProperty(props, SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr));
+    if (!win) {
         if (surface_failures_++ == 0) LOGI("vulkan: waiting for Android's window");
         return false;
     }
-    if (!SDL_Vulkan_CreateSurface(host::Window(), instance_, nullptr, &surface_)) {
+    VkAndroidSurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};
+    sci.window = win;
+    VkResult res = vkCreateAndroidSurfaceKHR(instance_, &sci, nullptr, &surface_);
+    if (res != VK_SUCCESS) {
         surface_ = VK_NULL_HANDLE;
-        if (surface_failures_++ == 0) LOGE("vulkan: no surface: %s", SDL_GetError());
+        if (surface_failures_++ == 0) LOGE("vulkan: no surface: %d", int(res));
         return false;
     }
     if (surface_failures_) LOGI("vulkan: surface made after %u tries", surface_failures_ + 1);
@@ -1523,6 +1575,7 @@ bool VulkanBackend::CreateDevice() {
     ci.enabledExtensionCount = uint32_t(dev_exts_.size());
     ci.ppEnabledExtensionNames = dev_exts_.data();
     VK_CHECK(vkCreateDevice(pd_, &ci, nullptr, &dev_));
+    volkLoadDevice(dev_);
     vkGetDeviceQueue(dev_, qfam_, 0, &queue_);
     bool core13 = api_ >= VK_API_VERSION_1_3, core12 = api_ >= VK_API_VERSION_1_2;
     begin_rendering_ = reinterpret_cast<PFN_vkCmdBeginRenderingKHR>(
@@ -1840,6 +1893,9 @@ bool VulkanBackend::InitUi() {
     ii.PipelineRenderingCreateInfo.pColorAttachmentFormats = &swap_fmt_;
     if (!dynamic_) ii.RenderPass = Pass(swap_fmt_, VK_FORMAT_UNDEFINED);
     ImGui::GetIO().BackendRendererName = "vulkan";
+    ImGui_ImplVulkan_LoadFunctions(
+        [](const char* name, void* inst) { return vkGetInstanceProcAddr(static_cast<VkInstance>(inst), name); },
+        instance_);
     return ImGui_ImplVulkan_Init(&ii);
 }
 
@@ -3262,6 +3318,12 @@ VkImageView VulkanBackend::BindTexture(const State& s, int stage, DrawTextures& 
         (tit != targets_.end() || cubes_.count(d.data) || d.data == game::g_env_cube.load() ||
          s.textures[size_t(stage)] == game::g_env_cube_tex.load() ||
          s.textures[size_t(stage)] == game::g_static_env_tex.load()))
+        return env_off_.view;
+    // the garage/frontend env map (0x45C8A8): a shipped static env texture, bound as the paint's env stage
+    // outside the race world at any reflection setting. Its bright sky washes the paint flat white, the same
+    // way the other env textures did before they were matched — dark grey here too, never the shipped sky.
+    // Matched on the object alone, not on d.cube: Describe may report it as a single face, not a cube.
+    if (s.textures[size_t(stage)] == game::g_garage_env_tex.load())
         return env_off_.view;
     if (!d.cube && !game::Opt().road_reflections && d.data && d.data == game::g_road_reflection.load())
         return road_off_.view;

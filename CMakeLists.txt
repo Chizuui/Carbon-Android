@@ -78,7 +78,9 @@ set(BUILD_EXTERNAL OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(glslang GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git GIT_TAG 16.0.0 GIT_SHALLOW TRUE)
 FetchContent_Declare(tomlplusplus GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git GIT_TAG v3.4.0 GIT_SHALLOW TRUE)
 FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG v1.91.0 GIT_SHALLOW TRUE)
-FetchContent_MakeAvailable(glslang tomlplusplus imgui)
+FetchContent_Declare(volk GIT_REPOSITORY https://github.com/zeux/volk.git GIT_TAG vulkan-sdk-1.3.296.0 GIT_SHALLOW TRUE)
+FetchContent_Declare(adrenotools GIT_REPOSITORY https://github.com/bylaws/libadrenotools.git GIT_TAG master GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(glslang tomlplusplus imgui volk adrenotools)
 
 # the SDK's runtime but its Windows parts, and those the game replaces (src/sound, src/d3d)
 file(GLOB RUNTIME_SOURCES ${SDK}/runtime/*/*.cpp)
@@ -96,10 +98,11 @@ set(IMGUI_SOURCES ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.c
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp)
 
 add_library(main SHARED ${RUNTIME_SOURCES} ${GAME_HOST_SOURCES} ${ANDROID_SOURCES} ${GEN_SOURCES} ${IMGUI_SOURCES}
-            ${CMAKE_CURRENT_BINARY_DIR}/image_sha1.cpp)
+            ${volk_SOURCE_DIR}/volk.c ${CMAKE_CURRENT_BINARY_DIR}/image_sha1.cpp)
 # compat/ for the SDK's x86 header, the SDK harness's for the Winsock and DXGI names its portable runtime uses
 target_include_directories(main PRIVATE ${NATIVE}/compat ${SDK}/harness/compat ${NATIVE} ${GAME} ${SDK}/runtime ${GEN}
-                           ${CMAKE_CURRENT_BINARY_DIR} ${glslang_SOURCE_DIR})
+                           ${CMAKE_CURRENT_BINARY_DIR} ${glslang_SOURCE_DIR} ${volk_SOURCE_DIR}
+                           ${adrenotools_SOURCE_DIR}/include)
 target_include_directories(main SYSTEM PRIVATE ${imgui_SOURCE_DIR})
 # x86 chars are signed, as the game's code and the runtime were written for
 target_compile_options(main PRIVATE -fno-strict-aliasing -fsigned-char)
@@ -108,8 +111,10 @@ set_source_files_properties(${HOST_SOURCES} PROPERTIES COMPILE_OPTIONS "-include
 set_source_files_properties(${GEN_SOURCES} PROPERTIES
     COMPILE_OPTIONS "-O2;-w;-fno-strict-aliasing;-fsigned-char")
 set_source_files_properties(${NATIVE}/vk_shader.cpp PROPERTIES COMPILE_DEFINITIONS ENABLE_HLSL)
+set_source_files_properties(${NATIVE}/vulkan.cpp ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp ${volk_SOURCE_DIR}/volk.c
+    PROPERTIES COMPILE_DEFINITIONS "VK_NO_PROTOTYPES;VK_USE_PLATFORM_ANDROID_KHR;IMGUI_IMPL_VULKAN_NO_PROTOTYPES")
 target_link_libraries(main PRIVATE SDL3::SDL3 tomlplusplus::tomlplusplus glslang glslang-default-resource-limits
-                      vulkan android log)
+                      adrenotools dl android log)
 # -PverboseLog: the info lines in the log of a release build too
 option(XBE_VERBOSE_LOG "log info lines in a release build" OFF)
 if(XBE_VERBOSE_LOG)

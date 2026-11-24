@@ -67,6 +67,23 @@ bool Init() {
         LOGE("memory: could not reserve the 4 GB guest space");
         return false;
     }
+    // Map the guest's null page (guest 0x00000000-0x0000FFFF) as a readable/writable scratch region,
+    // so a null-pointer deref returns zero instead of killing the process. The game crashes on a
+    // degenerate career (no valid car) at several sites (242FD0, 94F30, 240DE0), each needing its own
+    // guard — whack-a-mole. With the null page mapped, any null+small-offset read returns 0 and the
+    // game's own null checks decide what happens, so no new guard is needed for the next site. The
+    // low 64 KB is never legitimate game memory (the XBE image and the physical windows live far
+    // above it), and g_committed is untouched, so IsCommitted(0) still reports false and the
+    // explicit guards keep working. Reads return 0 (or the last value written to the scratch page);
+    // writes are absorbed by the scratch page and never reach real memory. Not fatal if the mapping
+    // fails — the game just keeps crashing on null derefs as before.
+#ifdef _WIN32
+    if (!VirtualAlloc(g_base, 0x10000, MEM_COMMIT, PAGE_READWRITE))
+        LOGE("memory: could not map the null page");
+#else
+    if (mmap(g_base, 0x10000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED)
+        LOGE("memory: could not map the null page");
+#endif
     LOGI("memory: guest space at %p", static_cast<void*>(g_base));
     return true;
 }

@@ -43,15 +43,18 @@ struct Options {
     bool shader_preload = false;  // native/vulkan.cpp makes earlier runs' shaders and pipelines at the start
     bool motion_blur = true;   // the blur by speed and the nitrous' radial blur, the per-game motion-blur hook skips them when off
     bool light_flares = false;  // the headlight, street light and neon flares, src/carbon/carbon.cpp skips eRenderLightFlares when off
+    bool headlights = true;     // synthesized headlight road pool in src/d3d/d3d8.cpp
     // cheats, the per-game ApplyCheats
     bool cheat_nos = false;           // the nitrous never runs out
     bool cheat_speedbreaker = false;  // the speedbreaker never runs out
     bool cheat_cash = false;          // the career's cash kept at kCheatCash
     bool cheat_no_police = false;     // no new cops or pursuits
-    bool cheat_unlock_all = false;    // every car, part and race unlocked
     bool skip_movies = false;     // currently does nothing: the 0x46D7A0 flag it used to write is unproven as the skip-movies flag, so the write was removed (src/carbon/carbon.cpp)
     uint32_t audio_output = 0;  // audio::kOutputAuto, kOutputStereo, kOutputSurround or kOutputMono
     std::string language = "int";  // one of kLanguages
+    std::string gpu_driver_dir;    // extracted custom Vulkan driver folder (empty = system driver)
+    std::string gpu_driver_lib;    // .so filename inside gpu_driver_dir
+    std::string gpu_driver_name;   // human-readable display name
     std::map<std::string, std::string> keys;  // action id to key names, absent is the default
     std::map<std::string, std::string> pad;   // action id to a controller's input, absent is SDL's mapping
 };
@@ -63,6 +66,7 @@ inline std::atomic<uint32_t> g_road_reflection{0};  // the road reflection targe
 inline std::atomic<uint32_t> g_env_cube{0};         // the cars' reflection cube's data, the same
 inline std::atomic<uint32_t> g_env_cube_tex{0};     // the cars' reflection cube's texture object, per game; 0 unknown
 inline std::atomic<uint32_t> g_static_env_tex{0};  // the static env map's texture object (STATICENVMAP), per game; 0 unknown
+inline std::atomic<uint32_t> g_garage_env_tex{0};  // the garage/frontend env map's texture object, per game; 0 unknown
 inline std::atomic<bool> g_focus_paused{false};  // the game thread waits while the app is in the background
 inline std::atomic<uint32_t> g_focus_pauses{0};  // focus pauses ended so far
 inline std::atomic<bool> g_flare_pass{false};  // the eRenderLightFlares pass is running; d3d logs its draws

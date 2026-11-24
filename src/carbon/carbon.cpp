@@ -64,11 +64,13 @@ constexpr uint32_t kEnvMapSwitch = 0x3F96BA;
 constexpr uint32_t kRoadReflectionSwitch = 0x3F972C;
 constexpr uint32_t kRoadReflectionView = 0x492F80;  // eView[4], RenderTarget pointer at +0x50 (0x492FD0)
 constexpr uint32_t kEnvMapFace0Target = 0x493750;   // EnvMap face 0 RenderTarget pointer (checked at 0x1121E4)
-// The paint's env stage (stage 1) binds one of these two texture objects, picked at 0xFF200/0xFF280 by
-// [0x45D33C]: the live cube, whose faces the env block renders, and STATICENVMAP, the shipped bright sky
-// loaded by name at 0x10B640. Both are used only as the env stage, never as a skybox or anything else.
+// The paint's env stage (stage 1) binds one of these three texture objects, picked at 0xFF200/0xFF280 by
+// [0x46D280] and [0x45D33C]: the live cube, whose faces the env block renders, STATICENVMAP, the shipped bright
+// sky loaded by name at 0x10B640, and the garage/frontend env map, a runtime-built 6-face object (0x1034xx)
+// used outside the race world. All three are used only as the env stage, never as a skybox or anything else.
 constexpr uint32_t kEnvCubeTexture = 0x45CA6C;      // live env cube texture object
 constexpr uint32_t kStaticEnvTexture = 0x45CA94;    // STATICENVMAP texture object
+constexpr uint32_t kGarageEnvTexture = 0x45C8A8;    // garage/frontend env map texture object
 constexpr uint32_t kCarShadowSwitch = 0x4084FC;
 
 // The colour data of a RenderTarget's D3DSurface ([target + 8] -> [surface + 4] physical addr).
@@ -120,13 +122,13 @@ void ApplyGraphicsSwitches() {
     // (reflections OFF): their addresses are fixed, the objects are built at load
     g_env_cube_tex = kEnvCubeTexture;
     g_static_env_tex = kStaticEnvTexture;
+    g_garage_env_tex = kGarageEnvTexture;
 }
 
 // Carbon cheats:
 // 0x46D944 holds AICopManager / ICopMgr singleton pointer
 constexpr uint32_t kCopManager = 0x46D944;
 constexpr uint32_t kNoNewCops = 0x5C;
-constexpr uint32_t kUnlockAll = 0x46D784;
 constexpr uint32_t kCareerRoot = 0x46A7CC, kCashField = 0x24310;
 
 // Carbon's speedbreaker meter (update 0x23F150, amount [this + 0x7C], 0..1) skips its drain when this debug
@@ -149,21 +151,6 @@ void ApplyCheats() {
     // inside the XBE image, so the write would land on dead code bytes instead of the cash field.
     if (o.cheat_cash && career >= 0x10000u && IsCommittedRange(career + kCashField, 4)) {
         kernel::W32(career + kCashField, 9999999);
-    }
-    // the byte 28 unlock tests or in (0x2C6A60 answers true at once, the thing lists' lock tests 0x8A500, ...);
-    // the game sets it itself only for one cheat entry (0x8FBB9) and from its boot (0x1EDA24), so it is held
-    // while on and given back as it was when turned off
-    static bool unlock_held = false;
-    static uint8_t unlock_saved = 0;
-    if (mem::IsCommitted(kUnlockAll)) {
-        if (o.cheat_unlock_all) {
-            if (!unlock_held) unlock_saved = kernel::G<uint8_t>(kUnlockAll);
-            unlock_held = true;
-            kernel::G<uint8_t>(kUnlockAll) = 1;
-        } else if (unlock_held) {
-            kernel::G<uint8_t>(kUnlockAll) = unlock_saved;
-            unlock_held = false;
-        }
     }
     // the cop manager's "no new cops or pursuits" byte, the one its vtable's +0x34 sets and +0x38 clears and
     // its spawn check (0x1B810) reads. Written only while on and once more when turned off, so the game's own
@@ -520,12 +507,11 @@ X86_FUNC(sub_00108690) {
 }
 
 // Light Flares in Carbon: sub_0010EC90 ("eRenderLightFlares" pass, cdecl/0-arg, plain ret).
-// Off unless light_flares is on: on Vulkan the pass draws giant green/white neon circles and connecting trails.
-// The setting is the experiment for the missing headlights: the pass draws the headlight glow, and the d3d light
-// log shows whether the title sets spot lights for the road's pool at all.
+// Off unless light_flares or headlights is on: the pass supplies the view-projection constants used to
+// synthesize the headlight road pool, and d3d8.cpp skips the glitchy fans/trails/composite.
 X86_EXTERN_FUNC(__imp__sub_0010EC90);
 X86_FUNC(sub_0010EC90) {
-    if (game::Opt().light_flares) {
+    if (game::Opt().light_flares || game::Opt().headlights) {
         game::g_flare_pass = true;
         __imp__sub_0010EC90(ctx, base);
         game::g_flare_pass = false;
@@ -593,7 +579,7 @@ static uint32_t g_widen_matrices = 0;  // the matrices while a wide view's proje
 
 X86_EXTERN_FUNC(__imp__sub_001040E0);
 X86_FUNC(sub_001040E0) {
-    const uint32_t view = kernel::R32(ctx.esp + 4);
+    const uint32_t view = game::IsCommittedRange(ctx.esp + 4, 4) ? kernel::R32(ctx.esp + 4) : 0;
     const uint32_t type = view && mem::IsCommitted(view + 8) ? kernel::R32(view + 8) : 0;
     const bool wide = mem::IsCommitted(0x45D294) && (kernel::G<uint8_t>(0x45D294) & 1);
     g_widen_matrices = wide && (type == 1 || type == 2 || (type >= 4 && type <= 7)) ? ctx.ecx : 0;
@@ -604,7 +590,8 @@ X86_FUNC(sub_001040E0) {
 X86_EXTERN_FUNC(__imp__sub_002EFCB4);
 X86_FUNC(sub_002EFCB4) {
     const uint32_t m = g_widen_matrices;
-    if (m && kernel::R32(ctx.esp + 8) == m && kernel::R32(ctx.esp + 12) == m + 0x40) {
+    if (m && game::IsCommittedRange(ctx.esp + 4, 12) && game::IsCommittedRange(m, 0x44) &&
+        kernel::R32(ctx.esp + 8) == m && kernel::R32(ctx.esp + 12) == m + 0x40) {
         g_widen_matrices = 0;
         kernel::G<float>(m + 0x40) *= (16.0f / 9.0f) / game::Aspect();
     }
@@ -705,23 +692,17 @@ static uint32_t PickFallbackCarHandle(uint32_t car_db, uint32_t h1b60) {
     return 0;
 }
 
+// Forward: the lock-table helper is defined with the buy-car unlock below; the career repair
+// in sub_00242FD0 uses it to restore cars bought while UNLOCK ALL was on.
+static void LockTableOp(const X86Context& base_ctx, uint8_t* base, uint32_t table, uint32_t id, bool insert);
+
 X86_FUNC(sub_00242FD0) {
     uint32_t sys = game::IsCommittedRange(game::kCareerRoot, 4) ? kernel::R32(game::kCareerRoot) : 0;
     uint32_t count = game::IsCommittedRange(sys + 0xD8u, 4) ? kernel::R32(sys + 0xD8u) : 0;
     uint32_t list = (count > 0 && game::IsCommittedRange(sys + 0xD4u, 4)) ? kernel::R32(sys + 0xD4u) : 0;
     uint32_t career = game::IsCommittedRange(list, 4) ? kernel::R32(list) : 0;
-    // The game itself only resolves career cars when GameFlowState==3 (sub_0027D970: cmp [0x46D280],3).
-    // This guard used to run its repair on every 242FD0 call regardless of state, which is what produced the
-    // "car_db empty" log spam: it ran while no career was loaded yet and found nothing to repair. Gate the
-    // repair the same way the game does; when gated out, log once per state value and do not touch the FeVars.
     uint32_t flow = game::IsCommittedRange(game::kGameFlowState, 4) ? kernel::R32(game::kGameFlowState) : 0xFFFFFFFFu;
-    if (flow != game::kGameFlowCareer) {
-        static uint32_t last_gated_flow = 0xFFFFFFFFu;
-        if (flow != last_gated_flow) {
-            LOGR("career: 242FD0 guard gated out (flow=%u), skipping repair", flow);
-            last_gated_flow = flow;
-        }
-    } else if (career >= 0x10000u && game::IsCommittedRange(career + 0x234u, 0xC8u * 0x14u)) {
+    if (career >= 0x10000u && game::IsCommittedRange(career + 0x234u, 0xC8u * 0x14u)) {
         uint32_t car_db = career + 0x234u;
         uint32_t wing = QueryFeVar(ctx, base, 0x1771u, 0xFFFFFFFFu, 0u);
         uint32_t h1b60 = QueryFeVar(ctx, base, 0x1B60u, 0xFFFFFFFFu, 0xFFFFFFFFu);
@@ -729,8 +710,6 @@ X86_FUNC(sub_00242FD0) {
         for (uint32_t idx = 0; idx < max_idx; idx++) {
             uint32_t h = QueryFeVar(ctx, base, 0x1B58u, idx, 0xFFFFFFFFu);
             uint32_t slot = FindCarSlotInDb(car_db, h);
-            // Leave the current car alone when the game already counts it as owned
-            // (owned flag set), even if its type is not in the known-type list.
             if (slot && ((kernel::R32(slot + 0x0Cu) & kCarOwnedFlag) != 0 || IsKnownCarType(kernel::R32(slot + 8u)))) continue;
             uint32_t fb = PickFallbackCarHandle(car_db, h1b60);
             LOGR("career: repair 1b58[%u]=%08X (wing=%08X 1b60=%08X) -> %08X", idx, h, wing, h1b60, fb);
@@ -742,8 +721,6 @@ X86_FUNC(sub_00242FD0) {
                 LOGR("career: car_db empty [0]=%08X/%08X/%08X [1]=%08X/%08X/%08X", kernel::R32(car_db),
                      kernel::R32(car_db + 8u), kernel::R32(car_db + 0x0Cu), kernel::R32(car_db + 0x14u),
                      kernel::R32(car_db + 0x1Cu), kernel::R32(car_db + 0x14u + 0x0Cu));
-                // Diagnostic: the car handle must live somewhere in the career struct — if it is not
-                // in car_db (career+0x234) the offset may be wrong for Carbon. Scan for it once.
                 if (game::IsCommittedRange(career, 0x3000u)) {
                     int found = 0;
                     for (uint32_t off = 0; off < 0x3000u && found < 4; off += 4u) {
@@ -756,8 +733,174 @@ X86_FUNC(sub_00242FD0) {
                 }
             }
         }
+        // Retroactive unlock for cars bought while UNLOCK ALL was on
+        {
+            static uint32_t last_unlocked_career = 0;
+            if (career != last_unlocked_career) {
+                last_unlocked_career = career;
+                if (game::IsCommittedRange(0x45680Cu, 4)) {
+                    uint32_t lock_table = kernel::R32(0x45680Cu);
+                    if (lock_table) {
+                        int unlocked = 0;
+                        for (uint32_t i = 0; i < 0xC8u; i++) {
+                            uint32_t slot = car_db + i * 0x14u;
+                            uint32_t h = kernel::R32(slot);
+                            if (h == 0 || h == 0xFFFFFFFFu || h == 0x12345678u) continue;
+                            uint32_t type = kernel::R32(slot + 8u);
+                            if (!type) continue;
+                            LockTableOp(ctx, base, lock_table, type, true);
+                            LockTableOp(ctx, base, lock_table, type, false);
+                            unlocked++;
+                        }
+                        if (unlocked) LOGR("career: retro unlock %d car types in lock table (career=%08X)", unlocked, career);
+                    }
+                }
+            }
+        }
+        bool any_valid = false;
+        for (uint32_t idx = 0; idx < max_idx; idx++) {
+            uint32_t hh = QueryFeVar(ctx, base, 0x1B58u, idx, 0xFFFFFFFFu);
+            uint32_t ss = FindCarSlotInDb(car_db, hh);
+            if (ss && ((kernel::R32(ss + 0x0Cu) & kCarOwnedFlag) != 0 || IsKnownCarType(kernel::R32(ss + 8u)))) { any_valid = true; break; }
+        }
+        if (!any_valid && PickFallbackCarHandle(car_db, h1b60) == 0) {
+            uint32_t h0 = QueryFeVar(ctx, base, 0x1B58u, 0, 0xFFFFFFFFu);
+            uint32_t slot0 = FindCarSlotInDb(car_db, h0);
+            LOGR("career: 242FD0 no valid car, running anyway (career=%08X flow=%u 1b58[0]=%08X slot=%08X type=%08X flags=%08X)",
+                 career, flow, h0, slot0, slot0 ? kernel::R32(slot0 + 8u) : 0, slot0 ? kernel::R32(slot0 + 0x0Cu) : 0);
+        }
+    } else {
+        static uint32_t last_gated_flow = 0xFFFFFFFFu;
+        if (flow != last_gated_flow) {
+            LOGR("career: 242FD0 guard gated out (flow=%u), no career loaded", flow);
+            last_gated_flow = flow;
+        }
     }
     __imp__sub_00242FD0(ctx, base);
+}
+
+// Guard the car-name classifier (0x94F30) against a null car object
+X86_EXTERN_FUNC(__imp__sub_00094F30);
+X86_FUNC(sub_00094F30) {
+    if (!ctx.ecx) {
+        uint32_t flow = game::IsCommittedRange(game::kGameFlowState, 4) ? kernel::R32(game::kGameFlowState) : 0xFFFFFFFFu;
+        uint32_t ret = game::IsCommittedRange(ctx.esp, 4) ? kernel::R32(ctx.esp) : 0;
+        static uint32_t last_ret = 0;
+        if (ret != last_ret) {
+            LOGR("cars: 94F30 guard: null car object, returning 0 (flow=%u, called from %08X)", flow, ret);
+            last_ret = ret;
+        }
+        ctx.eax = 0;
+        ctx.esp += 4;
+        return;
+    }
+    __imp__sub_00094F30(ctx, base);
+}
+
+// List-cleanup destructor (0x176F51 -> clean entry 0x176F50)
+X86_EXTERN_FUNC(__imp__sub_00176F50);
+X86_FUNC(sub_00176F51) {
+    __imp__sub_00176F50(ctx, base);
+}
+
+// FEng object layout (0x172400): validate child list at [obj+0x30] before walking
+X86_EXTERN_FUNC(__imp__sub_00172400);
+X86_FUNC(sub_00172400) {
+    uint32_t obj = game::IsCommittedRange(ctx.esp + 4, 4) ? kernel::R32(ctx.esp + 4) : 0;
+    bool bad = false;
+    if (!obj || !game::IsCommittedRange(obj, 0x34)) {
+        bad = true;
+    } else {
+        uint32_t cur = kernel::R32(obj + 0x30);
+        int n = 0;
+        while (cur) {
+            if (!mem::IsCommitted(cur + 4)) { bad = true; break; }
+            uint32_t next = kernel::R32(cur + 4);
+            if (next && !mem::IsCommitted(next)) { bad = true; break; }
+            cur = next;
+            if (++n > 10000) { bad = true; break; }
+        }
+    }
+    if (bad) {
+        static int logged = 0;
+        if (logged < 4) {
+            LOGR("worldmap: 172400 guard: bad object/list (obj=%08X), skipping layout", obj);
+            logged++;
+        }
+        ctx.eax = 0;
+        ctx.esp += 4;
+        return;
+    }
+    __imp__sub_00172400(ctx, base);
+}
+
+// Heap-block lookup/free (0x624E0): guard against wild pointer or corrupt region/table entries
+X86_EXTERN_FUNC(__imp__sub_000624E0);
+X86_FUNC(sub_000624E0) {
+    uint32_t ptr = game::IsCommittedRange(ctx.esp + 4, 4) ? kernel::R32(ctx.esp + 4) : 0;
+    bool bad = false;
+    if (!ptr || !game::IsCommittedRange(ptr - 0x14, 0x14)) {
+        bad = true;
+    } else {
+        for (uint32_t d = 0x4507DC; d < 0x4508DC && !bad; d += 0x10) {
+            if (!game::IsCommittedRange(d, 4)) { bad = true; break; }
+            uint32_t node = kernel::R32(d);
+            if (node && !game::IsCommittedRange(node, 0x18)) bad = true;
+        }
+        for (uint32_t t = 0x4508D8; t < 0x450918 && !bad; t += 4) {
+            if (!game::IsCommittedRange(t, 4)) { bad = true; break; }
+            uint32_t entry = kernel::R32(t);
+            if (entry && !game::IsCommittedRange(entry, 0x1C)) bad = true;
+        }
+    }
+    if (bad) {
+        static int logged = 0;
+        if (logged < 4) {
+            LOGR("race: 624E0 guard: bad pointer/region (ptr=%08X), skipping free", ptr);
+            logged++;
+        }
+        ctx.eax = 0;
+        ctx.esp += 4;
+        return;
+    }
+    __imp__sub_000624E0(ctx, base);
+}
+
+// Dynamic-array resize/insert (0x1728F0): validate [this+0x60]/[this+0x78] before memcpy
+X86_EXTERN_FUNC(__imp__sub_001728F0);
+X86_FUNC(sub_001728F0) {
+    uint32_t self = ctx.ecx;
+    uint32_t arg = game::IsCommittedRange(ctx.esp + 4, 4) ? kernel::R32(ctx.esp + 4) : 0;
+    bool bad = false;
+    if (!self || !game::IsCommittedRange(self, 0x7C)) {
+        bad = true;
+    } else {
+        uint32_t count = kernel::R32(self + 0x60);
+        uint32_t data = kernel::R32(self + 0x78);
+        if (count > 10000) {
+            bad = true;
+        } else if (count && (!data || !game::IsCommittedRange(data, count * 12u))) {
+            bad = true;
+        }
+        if (arg > 100000) bad = true;
+    }
+    if (bad) {
+        static int logged = 0;
+        if (logged < 4) {
+            LOGR("race: 1728F0 guard: bad container/data (self=%08X arg=%u), skipping resize", self, arg);
+            logged++;
+        }
+        ctx.eax = arg;
+        ctx.esp += 8;
+        return;
+    }
+    __imp__sub_001728F0(ctx, base);
+}
+
+// Race-mode notify (0x240DE0): pass-through (null safety net absorbs degenerate career derefs)
+X86_EXTERN_FUNC(__imp__sub_00240DE0);
+X86_FUNC(sub_00240DE0) {
+    __imp__sub_00240DE0(ctx, base);
 }
 
 // Buy-car unlock (0xA19E0, FeVar op 0x1B59): when a car is bought the game clones the template slot

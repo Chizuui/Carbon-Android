@@ -690,15 +690,21 @@ constexpr float kTabAspect = 2.3f, kPillAspect = 2.1f, kPedalAspect = 0.6f;
 // Black/White below-right of ABXY, and Start/Back (Select) at the top alongside Settings.
 int FeMenuSlot(size_t i) {
     if (i >= kButtonCount) return -1;
-    int press = kButtons[i].press;
-    if (press >= kAnalogA && press <= kAnalogY) return press - kAnalogA;  // 0..3: A, B, X, Y
-    if (press >= kBit && press <= kBit + 3) return 4 + (press - kBit);   // 4..7: Up, Down, Left, Right
-    if (press == kBit + 4) return 8;                                     // 8: Start
-    if (press == kBit + 5) return 9;                                     // 9: Back (Select)
-    if (press == 4) return 10;                                           // 10: Black
-    if (press == 5) return 11;                                           // 11: White
-    if (press == kAnalogLT) return 12;                                   // 12: LT (top-left)
-    if (press == kAnalogRT) return 13;                                   // 13: RT (top-right)
+    std::string_view id = kButtons[i].id;
+    if (id == "a") return 0;
+    if (id == "b") return 1;
+    if (id == "x") return 2;
+    if (id == "y") return 3;
+    if (id == "dpad_up") return 4;
+    if (id == "dpad_down") return 5;
+    if (id == "dpad_left") return 6;
+    if (id == "dpad_right") return 7;
+    if (id == "start") return 8;
+    if (id == "back") return 9;
+    if (id == "black") return 10;
+    if (id == "white") return 11;
+    if (id == "lt") return 12;
+    if (id == "rt") return 13;
     return -1;
 }
 

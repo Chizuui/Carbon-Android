@@ -57,6 +57,8 @@ void EditLayout();
 // native/update.cpp: the activity asks GitHub for a newer release and says what it found
 namespace host {
 void CheckForUpdates();
+void PickCustomDriver();
+void ResetCustomDriver();
 // native/stats.cpp: the performance overlay's numbers, percent and degrees, -1 where the device does not tell
 void SamplePerf();
 float CpuLoad();
@@ -432,9 +434,9 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kGyroSensitivity, kTouchOpacity, kTouchSize, kTouchEdit, kCheckUpdates, kAspectRatio, kScreenFilter,
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
-             kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
-             kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kShaderPreload, kBrightness, kLowEndPreset,
-             kMidPreset, kHighPreset, kExportLog, kDiscord, kOverlayLayout };
+             kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice,
+             kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kHeadlights, kShaderPreload, kBrightness, kLowEndPreset,
+             kMidPreset, kHighPreset, kExportLog, kDiscord, kOverlayLayout, kGpuDriver, kResetGpuDriver };
 
 using rows::Kind;
 using rows::Row;
@@ -452,6 +454,8 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kVsync, "VERTICAL SYNC"},
     {Kind::Value, kMaxFps, "MAX FRAME RATE"},
     {Kind::Value, kShaderPreload, "SHADER PRELOADING"},
+    {Kind::Link, kGpuDriver, "CUSTOM GPU DRIVER"},
+    {Kind::Link, kResetGpuDriver, "RESET GPU DRIVER"},
     {Kind::Heading, -1, "OVERLAY PERFORMA"},
     {Kind::Value, kFpsCounter, "FPS COUNTER"},
     {Kind::Value, kOverlayLayout, "OVERLAY LAYOUT"},
@@ -471,6 +475,7 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kRainDrops, "SCREEN RAINDROPS"},
     {Kind::Value, kYellowTint, "YELLOW TINT"},
     {Kind::Value, kMotionBlur, "MOTION BLUR"},
+    {Kind::Value, kHeadlights, "HEADLIGHTS"},
     {Kind::Value, kLightFlares, "LIGHT FLARES"},
     {Kind::Value, kScreenFilter, "SCREEN FILTER"},
 };
@@ -500,7 +505,6 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kCheatSpeedbreaker, "INFINITE SPEEDBREAKER"},
     {Kind::Value, kCheatCash, "MAX CASH"},
     {Kind::Value, kCheatNoPolice, "NO POLICE"},
-    {Kind::Value, kCheatUnlockAll, "UNLOCK ALL"},
 };
 
 // the credits' names, an info row's id; as they are, untranslated
@@ -561,13 +565,13 @@ bool* ToggleFlag(Settings& s, int id) {
         case kRainDrops: return &o.rain_drops;
         case kYellowTint: return &o.yellow_tint;
         case kMotionBlur: return &o.motion_blur;
+        case kHeadlights: return &o.headlights;
         case kLightFlares: return &o.light_flares;
         case kShaderPreload: return &o.shader_preload;
         case kCheatNos: return &o.cheat_nos;
         case kCheatSpeedbreaker: return &o.cheat_speedbreaker;
         case kCheatCash: return &o.cheat_cash;
         case kCheatNoPolice: return &o.cheat_no_police;
-        case kCheatUnlockAll: return &o.cheat_unlock_all;
         case kSkipMovies: return &o.skip_movies;
         default: return nullptr;
     }
@@ -738,7 +742,6 @@ void RestoreDefaults(int page) {
         o.cheat_speedbreaker = none.cheat_speedbreaker;
         o.cheat_cash = none.cheat_cash;
         o.cheat_no_police = none.cheat_no_police;
-        o.cheat_unlock_all = none.cheat_unlock_all;
         Changed();
         return;
     }
@@ -884,7 +887,11 @@ void LinkRow(const Row& r) {
     bool open = ImGui::Selectable("##link", false, ImGuiSelectableFlags_AllowOverlap, ImVec2(box.row_w, box.row_h));
     if (ImGui::IsItemFocused() || ImGui::IsItemHovered()) FillItem();
     RowLabel(box, r.label);
-    std::string value = r.id == kExportLog ? g_export_log_status : Ui("OPEN");
+    std::string value;
+    if (r.id == kExportLog) value = g_export_log_status;
+    else if (r.id == kGpuDriver) value = game::Opt().gpu_driver_name.empty() ? "SYSTEM" : game::Opt().gpu_driver_name;
+    else if (r.id == kResetGpuDriver) value = Ui("RESET");
+    else value = Ui("OPEN");
     float value_x = box.row_x + box.row_w - box.block_w + box.row_h + ImGui::GetStyle().ItemSpacing.x;
     float pad = (box.value_w - ImGui::CalcTextSize(value.c_str()).x) * 0.5f;
     ImGui::SetCursorPos(ImVec2(value_x + std::max(pad, 0.0f), box.row_y));
@@ -896,6 +903,8 @@ void LinkRow(const Row& r) {
     EndRow(box);
     if (!open) return;
     if (r.id == kExportLog) ExportLog();
+    else if (r.id == kGpuDriver) host::PickCustomDriver();
+    else if (r.id == kResetGpuDriver) host::ResetCustomDriver();
     else if (r.id == kTouchEdit) touch::EditLayout();
     else if (const char* url = LinkUrl(r.id)) SDL_OpenURL(url);
 }
@@ -1371,6 +1380,8 @@ std::string rows::Value(const Row& r, int step) {
             return Ui(RowText(r.id, step));
         case Kind::Link:
             if (r.id == kExportLog) return g_export_log_status;
+            if (r.id == kGpuDriver) return game::Opt().gpu_driver_name.empty() ? "SYSTEM" : game::Opt().gpu_driver_name;
+            if (r.id == kResetGpuDriver) return Ui("RESET");
             return Ui(r.id == kLowEndPreset || r.id == kMidPreset || r.id == kHighPreset ? "APPLY" : "OPEN");
         case Kind::Info:
             return r.id >= 0 && r.id < int(std::size(kCreditNames)) ? kCreditNames[r.id] : "";
@@ -1395,6 +1406,10 @@ void rows::Activate(const Row& r) {
     if (r.kind == Kind::Link) {
         if (r.id == kExportLog) {
             ExportLog();
+        } else if (r.id == kGpuDriver) {
+            host::PickCustomDriver();
+        } else if (r.id == kResetGpuDriver) {
+            host::ResetCustomDriver();
         } else if (r.id == kLowEndPreset) {
             ApplyPreset(0);
         } else if (r.id == kMidPreset) {

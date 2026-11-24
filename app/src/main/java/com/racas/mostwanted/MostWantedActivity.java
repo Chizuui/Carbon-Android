@@ -74,6 +74,7 @@ public class MostWantedActivity extends SDLActivity {
     private static native void nativeLooseAxes(float lx, float ly, float rx, float ry, float lt, float rt, float hx,
                                                float hy);
     private static native void nativeLooseRelease();
+    private static native void nativeSetCustomDriver(String dir, String lib, String name);
 
     private static boolean loose(InputEvent e, int sources) {
         return !mBrokenLibraries && (e.getSource() & sources) != 0
@@ -228,6 +229,36 @@ public class MostWantedActivity extends SDLActivity {
                     .setPositiveButton(R.string.close, null)
                     .show();
         });
+    }
+
+    public void pickCustomDriver() {
+        runOnUiThread(() -> {
+            if (!isFinishing()) DriverManager.pick(this);
+        });
+    }
+
+    public void resetCustomDriver() {
+        DriverManager.reset(this);
+        runOnUiThread(() -> {
+            if (isFinishing() || (dialog != null && dialog.isShowing())) return;
+            dialog = new AlertDialog.Builder(this)
+                    .setTitle(R.string.custom_driver_title)
+                    .setMessage(R.string.custom_driver_reset)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
+        });
+    }
+
+    public String nativeLibDir() {
+        String dir = getApplicationInfo().nativeLibraryDir;
+        return dir.endsWith("/") ? dir : (dir + "/");
+    }
+
+    public String driverTempDir() {
+        File d = new File(getCacheDir(), "adrenotools_tmp");
+        d.mkdirs();
+        String p = d.getAbsolutePath();
+        return p.endsWith("/") ? p : (p + "/");
     }
 
     // OPEN DONATION LINK from the options menu, from the game's thread
@@ -474,6 +505,26 @@ public class MostWantedActivity extends SDLActivity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == DriverManager.REQUEST) {
+            Uri uri = resultCode == RESULT_OK && data != null ? data.getData() : null;
+            if (uri == null) return;
+            Toast.makeText(this, R.string.custom_driver_installing, Toast.LENGTH_SHORT).show();
+            DriverManager.install(this, uri, (ok, dir, lib, name, err) -> {
+                if (ok) {
+                    nativeSetCustomDriver(dir, lib, name);
+                    if (!isFinishing() && (dialog == null || !dialog.isShowing())) {
+                        dialog = new AlertDialog.Builder(this)
+                                .setTitle(R.string.custom_driver_title)
+                                .setMessage(getString(R.string.custom_driver_installed, name))
+                                .setPositiveButton(android.R.string.ok, null)
+                                .show();
+                    }
+                } else {
+                    Toast.makeText(this, getString(R.string.custom_driver_failed, err), Toast.LENGTH_LONG).show();
+                }
+            });
+            return;
+        }
         if (requestCode != GameImporter.REQUEST) {
             super.onActivityResult(requestCode, resultCode, data);
             return;

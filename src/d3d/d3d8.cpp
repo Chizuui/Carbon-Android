@@ -1613,6 +1613,15 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                     std::memcpy(f, b + i * stride, 12);
                     LOGR("d3d: flare v%u %.2f %.2f %.2f", i, f[0], f[1], f[2]);
                 }
+                // the fan's world positions are sane (a small quad around the light), so if it renders as
+                // static the vertex-shader transform is suspect: dump the view-projection candidate
+                // constants (D3D c0-c11 live at vsc[96..107]) for the first two fan draws
+                if (prim == 7 && flare_pass_dumps <= 2) {
+                    for (int c = 0; c < 12; c++) {
+                        const auto& v = g_state.vsc[96 + c];
+                        LOGR("d3d: flare c%d %.4f %.4f %.4f %.4f", c, v[0], v[1], v[2], v[3]);
+                    }
+                }
             }
         }
     }
@@ -1668,9 +1677,11 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
             }
         }
     }
-    // the fans and trails come out as static on Vulkan, so skip them outright while the flare pass runs; the
-    // fullscreen composite quad is skipped below for the same reason
-    if (game::g_flare_pass && ((prim == 7 && count == 4 && stride == 32) || (prim == 5 && count == 3 && stride == 24))) {
+    // headlight test: let the fan billboard (prim 7) draw again — its world positions are sane (a small quad
+    // around the light), so the "static" is in the vertex-shader transform, not the geometry; if it still
+    // comes out wrong the constant dump above shows what matrix it is fed. The trail (prim 5) stays skipped
+    // to isolate the fan, and the fullscreen composite quad is skipped below for the same reason as before
+    if (game::g_flare_pass && (prim == 5 && count == 3 && stride == 24)) {
         return;
     }
     // the flare pass ends with a fullscreen composite quad (one 640x480, or two 640x240 halves in the loop

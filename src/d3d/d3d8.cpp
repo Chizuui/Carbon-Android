@@ -1572,7 +1572,15 @@ float g_pool_fans[8][3];
 int g_pool_fan_count = 0;
 
 void DrawHeadlightPool() {
-    if (!g_backend || g_pool_fan_count == 0) return;
+    if (!g_backend) return;
+    if (g_pool_fan_count == 0) {
+        static int no_fan_logs = 0;
+        if (no_fan_logs < 4) {
+            no_fan_logs++;
+            LOGR("d3d: headlight pool: no fans recorded this pass");
+        }
+        return;
+    }
     // camera from the view matrix (g_state.transforms[2], row-major, world->view):
     // row 0 = right, row 2 = backward, so forward = -row 2
     const float* V = g_state.transforms[2].data();
@@ -1582,6 +1590,11 @@ void DrawHeadlightPool() {
     float fl = std::sqrt(fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]);
     float rl = std::sqrt(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
     if (fl < 1e-6f || rl < 1e-6f) {
+        static int bad_view_logs = 0;
+        if (bad_view_logs < 4) {
+            bad_view_logs++;
+            LOGR("d3d: headlight pool: bad view matrix (fl %.4f rl %.4f)", fl, rl);
+        }
         g_pool_fan_count = 0;
         return;
     }
@@ -1610,6 +1623,11 @@ void DrawHeadlightPool() {
         }
     }
     if (!H || best > 60.0f) {
+        static int no_headlight_logs = 0;
+        if (no_headlight_logs < 4) {
+            no_headlight_logs++;
+            LOGR("d3d: headlight pool: no headlight ahead of camera (fans %d best %.1f)", g_pool_fan_count, best);
+        }
         g_pool_fan_count = 0;
         return;
     }
@@ -1752,21 +1770,6 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                     std::memcpy(f, b + i * stride, 12);
                     LOGR("d3d: flare v%u %.2f %.2f %.2f", i, f[0], f[1], f[2]);
                 }
-                // headlight pool: remember this fan's centre (a light's world position)
-                if (prim == 7 && count == 4 && stride == 32 && g_pool_fan_count < 8) {
-                    float cx = 0, cy = 0, cz = 0;
-                    for (uint32_t i = 0; i < 4; i++) {
-                        float f[3];
-                        std::memcpy(f, b + i * stride, 12);
-                        cx += f[0];
-                        cy += f[1];
-                        cz += f[2];
-                    }
-                    g_pool_fans[g_pool_fan_count][0] = cx * 0.25f;
-                    g_pool_fans[g_pool_fan_count][1] = cy * 0.25f;
-                    g_pool_fans[g_pool_fan_count][2] = cz * 0.25f;
-                    g_pool_fan_count++;
-                }
                 // the fan's world positions are sane (a small quad around the light), so if it renders as
                 // static the vertex-shader transform is suspect: dump the view-projection candidate
                 // constants (D3D c0-c11 live at vsc[96..107]) for the first two fan draws
@@ -1777,6 +1780,24 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                     }
                 }
             }
+        }
+        // headlight pool: remember this fan's centre (a light's world position). NOT gated by the
+        // logging cap above — the pool needs a fresh centre every frame, and the cap stops after
+        // ~2 frames, which would starve the pool.
+        if (prim == 7 && count == 4 && stride == 32 && g_pool_fan_count < 8) {
+            const uint8_t* b = static_cast<const uint8_t*>(vertices);
+            float cx = 0, cy = 0, cz = 0;
+            for (uint32_t i = 0; i < 4; i++) {
+                float f[3];
+                std::memcpy(f, b + i * stride, 12);
+                cx += f[0];
+                cy += f[1];
+                cz += f[2];
+            }
+            g_pool_fans[g_pool_fan_count][0] = cx * 0.25f;
+            g_pool_fans[g_pool_fan_count][1] = cy * 0.25f;
+            g_pool_fans[g_pool_fan_count][2] = cz * 0.25f;
+            g_pool_fan_count++;
         }
     }
     // the headlight experiment: the flare quads (quad list of 4, stride 28) come out giant on Vulkan, so clamp

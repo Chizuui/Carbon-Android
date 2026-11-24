@@ -1670,8 +1670,10 @@ void DrawHeadlightPool() {
         corners[i][1] = road_y + 0.15f;
         corners[i][2] = cam[2] + fwd[2] * d + right[2] * s;
     }
-    // world -> clip with the captured view-projection (row vector: p * VP), then NDC -> screen
-    // (RHW)
+    // world -> clip with the captured view-projection. D3D is row-vector: clip[j] is the
+    // dot of the world position with VP ROW j (c0..c3 are the rows, each a float4). The
+    // previous code used the transposed (column) indexing, which collapsed every corner
+    // to the screen centre — a 1-pixel dot instead of a trapezoid.
     float vw = float(g_state.viewport.w), vh = float(g_state.viewport.h);
     float vx = float(g_state.viewport.x), vy = float(g_state.viewport.y);
     if (vw <= 0 || vh <= 0) {
@@ -1687,7 +1689,7 @@ void DrawHeadlightPool() {
         float p[4] = {corners[i][0], corners[i][1], corners[i][2], 1.0f};
         float clip[4] = {};
         for (int j = 0; j < 4; j++)
-            clip[j] = p[0] * VP[j] + p[1] * VP[4 + j] + p[2] * VP[8 + j] + p[3] * VP[12 + j];
+            clip[j] = p[0] * VP[j * 4 + 0] + p[1] * VP[j * 4 + 1] + p[2] * VP[j * 4 + 2] + p[3] * VP[j * 4 + 3];
         if (clip[3] <= 1e-6f) {
             g_pool_fan_count = 0;
             return;

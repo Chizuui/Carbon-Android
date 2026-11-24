@@ -1575,14 +1575,18 @@ uint32_t UpVertices(const void* src, uint32_t bytes) {
 float g_pool_fans[8][3];
 int g_pool_fan_count = 0;
 float g_pool_vp[16];  // VP rows c0..c3, captured from the fan's vertex-shader constants
+bool g_pool_vp_valid = false;
 
 void DrawHeadlightPool() {
     if (!g_backend) return;
-    if (g_pool_fan_count == 0) {
-        static int no_fan_logs = 0;
-        if (no_fan_logs < 4) {
-            no_fan_logs++;
-            LOGR("d3d: headlight pool: no fans recorded this pass");
+    // the pool is camera-anchored, so it only needs the VP (captured from a fan draw). A
+    // pass with no fans still has the previous frame's VP, which is fresh enough — the
+    // camera barely moves in one frame. Only bail when no VP was ever captured.
+    if (!g_pool_vp_valid) {
+        static int no_vp_logs = 0;
+        if (no_vp_logs < 4) {
+            no_vp_logs++;
+            LOGR("d3d: headlight pool: no view-projection captured yet");
         }
         return;
     }
@@ -1648,54 +1652,23 @@ void DrawHeadlightPool() {
             right[2] = r[2] / rl;
         }
     }
-    // the player's headlight: the fan centre closest to the camera and ahead of it
-    float best = 1e30f;
-    const float* H = nullptr;
-    static int cam_logs = 0;
-    if (cam_logs < 4) {
-        cam_logs++;
-        LOGR("d3d: headlight pool cam (%.1f, %.1f, %.1f) fwd (%.3f, %.3f, %.3f) right (%.3f, %.3f, %.3f) VP "
-             "c0 %.3f %.3f %.3f %.3f c1 %.3f %.3f %.3f %.3f c2 %.3f %.3f %.3f %.3f c3 %.3f %.3f %.3f %.3f",
-             cam[0], cam[1], cam[2], fwd[0], fwd[1], fwd[2], right[0], right[1], right[2], VP[0], VP[1], VP[2],
-             VP[3], VP[4], VP[5], VP[6], VP[7], VP[8], VP[9], VP[10], VP[11], VP[12], VP[13], VP[14], VP[15]);
-        for (int i = 0; i < g_pool_fan_count; i++) {
-            const float* c = g_pool_fans[i];
-            float d[3] = {c[0] - cam[0], c[1] - cam[1], c[2] - cam[2]};
-            float ahead = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
-            LOGR("d3d: headlight pool fan %d (%.1f, %.1f, %.1f) ahead %.1f", i, c[0], c[1], c[2], ahead);
-        }
-    }
-    for (int i = 0; i < g_pool_fan_count; i++) {
-        const float* c = g_pool_fans[i];
-        float d[3] = {c[0] - cam[0], c[1] - cam[1], c[2] - cam[2]};
-        float ahead = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
-        if (ahead <= 0) continue;
-        float dist = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-        if (dist < best) {
-            best = dist;
-            H = c;
-        }
-    }
-    if (!H || best > 60.0f) {
-        static int no_headlight_logs = 0;
-        if (no_headlight_logs < 4) {
-            no_headlight_logs++;
-            LOGR("d3d: headlight pool: no headlight ahead of camera (fans %d best %.1f)", g_pool_fan_count, best);
-        }
-        g_pool_fan_count = 0;
-        return;
-    }
-    float road_y = H[1] - 1.0f;  // headlight ~1 unit above the road
-    float near_d = 2.0f, far_d = 35.0f, near_w = 1.5f, far_w = 6.0f;
+    // the pool is anchored to the CAMERA, not to a flare fan. The player's headlight fan
+    // is not a reliable anchor: in a canyon only one static road light had a fan, 190 units
+    // ahead, and the player's own headlight flare is culled from behind (it points away
+    // from the chase camera). The chase camera sits behind the car looking down the road,
+    // so a pool along its forward ray, on the ground, lights the road ahead of the car.
+    float road_y = cam[1] - 5.0f;  // chase camera ~5 units above the road
+    float near_d = 3.0f, far_d = 38.0f, near_w = 1.5f, far_w = 6.0f;
+    // pool centreline starts at the camera and runs forward; the headlight is on that line
     float corners[4][3];
     // near-left, near-right, far-right, far-left (fan order: (0,1,2),(0,2,3))
     for (int i = 0; i < 4; i++) {
         float d = (i < 2) ? near_d : far_d;
         float w = (i < 2) ? near_w : far_w;
         float s = (i == 0 || i == 3) ? -w : w;  // left for v0,v3; right for v1,v2
-        corners[i][0] = H[0] + fwd[0] * d + right[0] * s;
+        corners[i][0] = cam[0] + fwd[0] * d + right[0] * s;
         corners[i][1] = road_y + 0.15f;
-        corners[i][2] = H[2] + fwd[2] * d + right[2] * s;
+        corners[i][2] = cam[2] + fwd[2] * d + right[2] * s;
     }
     // world -> clip with the captured view-projection (row vector: p * VP), then NDC -> screen
     // (RHW)
@@ -1730,9 +1703,9 @@ void DrawHeadlightPool() {
     static int pool_logs = 0;
     if (pool_logs < 4) {
         pool_logs++;
-        LOGR("d3d: headlight pool H (%.1f, %.1f, %.1f) cam (%.1f, %.1f, %.1f) fwd (%.2f, %.2f, %.2f) screen "
+        LOGR("d3d: headlight pool cam (%.1f, %.1f, %.1f) fwd (%.2f, %.2f, %.2f) road_y %.1f screen "
              "%.0f,%.0f %.0f,%.0f %.0f,%.0f %.0f,%.0f",
-             H[0], H[1], H[2], cam[0], cam[1], cam[2], fwd[0], fwd[1], fwd[2], verts[0].x, verts[0].y, verts[1].x,
+             cam[0], cam[1], cam[2], fwd[0], fwd[1], fwd[2], road_y, verts[0].x, verts[0].y, verts[1].x,
              verts[1].y, verts[2].x, verts[2].y, verts[3].x, verts[3].y);
     }
     // draw it: fixed-function RHW quad, no texture, no pixel shader (diffuse colour only),
@@ -1836,25 +1809,29 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
         }
         // headlight pool: remember this fan's centre (a light's world position). NOT gated by the
         // logging cap above — the pool needs a fresh centre every frame, and the cap stops after
-        // ~2 frames, which would starve the pool. Also capture the view-projection matrix the
-        // fan's shader is using (D3D c0-c3): the D3D transform state is identity here, so this
-        // is the only copy of the real camera.
-        if (prim == 7 && count == 4 && stride == 32 && g_pool_fan_count < 8) {
-            const uint8_t* b = static_cast<const uint8_t*>(vertices);
-            float cx = 0, cy = 0, cz = 0;
-            for (uint32_t i = 0; i < 4; i++) {
-                float f[3];
-                std::memcpy(f, b + i * stride, 12);
-                cx += f[0];
-                cy += f[1];
-                cz += f[2];
-            }
-            g_pool_fans[g_pool_fan_count][0] = cx * 0.25f;
-            g_pool_fans[g_pool_fan_count][1] = cy * 0.25f;
-            g_pool_fans[g_pool_fan_count][2] = cz * 0.25f;
-            g_pool_fan_count++;
+        // ~2 frames, which would starve the pool. The view-projection is captured on EVERY fan
+        // draw (not gated by the fan count either): the pool is camera-anchored and needs a
+        // fresh VP each frame, and the D3D transform state is identity here, so this is the
+        // only copy of the real camera.
+        if (prim == 7 && count == 4 && stride == 32) {
             for (int r = 0; r < 4; r++)
                 for (int c = 0; c < 4; c++) g_pool_vp[r * 4 + c] = g_state.vsc[96 + r][c];
+            g_pool_vp_valid = true;
+            if (g_pool_fan_count < 8) {
+                const uint8_t* b = static_cast<const uint8_t*>(vertices);
+                float cx = 0, cy = 0, cz = 0;
+                for (uint32_t i = 0; i < 4; i++) {
+                    float f[3];
+                    std::memcpy(f, b + i * stride, 12);
+                    cx += f[0];
+                    cy += f[1];
+                    cz += f[2];
+                }
+                g_pool_fans[g_pool_fan_count][0] = cx * 0.25f;
+                g_pool_fans[g_pool_fan_count][1] = cy * 0.25f;
+                g_pool_fans[g_pool_fan_count][2] = cz * 0.25f;
+                g_pool_fan_count++;
+            }
         }
     }
     // the headlight experiment: the flare quads (quad list of 4, stride 28) come out giant on Vulkan, so clamp

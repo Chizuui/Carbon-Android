@@ -117,6 +117,43 @@ bool HudPackage(uint32_t p) {
 
 }  // namespace
 
+// Diagnostic: dump every object in the HUD packages once per session (hash, type, data x/y).
+// Used to identify the crew bar (top-left) so it can be made a movable HUD item. Only counts
+// as dumped once a HUD package actually had objects; before a race loads, it retries.
+void DumpHudObjects() {
+    static bool dumped = false;
+    if (dumped) return;
+    std::lock_guard<std::mutex> lock(g_hud_mtx);
+    uint32_t cfeng = Peek(kCFEng), fe = cfeng ? Peek(cfeng) : 0;
+    int n = 0;
+    int total = 0;
+    for (uint32_t p = fe ? Peek(fe + kFirstPackage) : 0; p && n < kMaxPackages; p = Peek(p + kPackageNext), n++) {
+        if (!HudPackage(p)) continue;
+        uint32_t name = Peek(p + kPackageName);
+        char pname[32] = {};
+        for (uint32_t i = 0; name && i < 31 && mem::IsCommitted(name + i); i++) pname[i] = char(kernel::G<uint8_t>(name + i));
+        int budget = kMaxObjects;
+        int count = 0;
+        for (uint32_t o = Peek(p + kPackageObjects); o && budget-- > 0; o = Peek(o + kObjectNext)) {
+            uint32_t hash = Peek(o + kObjectHash);
+            uint32_t type = Peek(o + kObjectType);
+            uint32_t data = Peek(o + kObjectData);
+            float x = 0, y = 0;
+            if (data && mem::IsCommitted(data + kDataY + 3)) {
+                x = Float(data + kDataX);
+                y = Float(data + kDataY);
+            }
+            // only log objects in the top-left quadrant (crew bar lives there) plus all groups
+            if ((x < -100.0f && y < -100.0f) || type == kTypeGroup) {
+                LOGR("hud: dump pkg %s obj hash %08X type %u pos (%.1f, %.1f)", pname, hash, type, x, y);
+                if (++count > 60) break;
+            }
+            total++;
+        }
+    }
+    if (total > 0) dumped = true;
+}
+
 void ApplyHudLayout() {
     std::lock_guard<std::mutex> lock(g_hud_mtx);
     uint32_t cfeng = Peek(kCFEng), fe = cfeng ? Peek(cfeng) : 0;
@@ -163,6 +200,7 @@ struct MinimapOriginScope {
 X86_EXTERN_FUNC(__imp__sub_0014D8B0);
 X86_FUNC(sub_0014D8B0) {
     __imp__sub_0014D8B0(ctx, base);
+    game::DumpHudObjects();
     game::ApplyHudLayout();
 }
 

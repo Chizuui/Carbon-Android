@@ -1581,11 +1581,12 @@ void DrawHeadlightPool() {
         }
         return;
     }
-    // camera from the view matrix (g_state.transforms[2], row-major, world->view):
-    // row 0 = right, row 2 = backward, so forward = -row 2
+    // camera from the view matrix (g_state.transforms[2], row-major, world->view). D3D is
+    // left-handed: the camera looks down +Z in view space, so forward = +row 2 (not -row 2
+    // as in a right-handed system — that pointed backwards and no fan was ever "ahead").
     const float* V = g_state.transforms[2].data();
     const float* P = g_state.transforms[3].data();
-    float fwd[3] = {-V[8], -V[9], -V[10]};
+    float fwd[3] = {V[8], V[9], V[10]};
     float right[3] = {V[0], V[1], V[2]};
     float fl = std::sqrt(fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]);
     float rl = std::sqrt(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
@@ -1611,6 +1612,20 @@ void DrawHeadlightPool() {
     // the player's headlight: the fan centre closest to the camera and ahead of it
     float best = 1e30f;
     const float* H = nullptr;
+    static int cam_logs = 0;
+    if (cam_logs < 4) {
+        cam_logs++;
+        LOGR("d3d: headlight pool cam (%.1f, %.1f, %.1f) fwd (%.3f, %.3f, %.3f) right (%.3f, %.3f, %.3f) view "
+             "row0 %.3f %.3f %.3f %.3f row1 %.3f %.3f %.3f %.3f row2 %.3f %.3f %.3f %.3f row3 %.3f %.3f %.3f %.3f",
+             cam[0], cam[1], cam[2], fwd[0], fwd[1], fwd[2], right[0], right[1], right[2], V[0], V[1], V[2], V[3],
+             V[4], V[5], V[6], V[7], V[8], V[9], V[10], V[11], V[12], V[13], V[14], V[15]);
+        for (int i = 0; i < g_pool_fan_count; i++) {
+            const float* c = g_pool_fans[i];
+            float d[3] = {c[0] - cam[0], c[1] - cam[1], c[2] - cam[2]};
+            float ahead = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
+            LOGR("d3d: headlight pool fan %d (%.1f, %.1f, %.1f) ahead %.1f", i, c[0], c[1], c[2], ahead);
+        }
+    }
     for (int i = 0; i < g_pool_fan_count; i++) {
         const float* c = g_pool_fans[i];
         float d[3] = {c[0] - cam[0], c[1] - cam[1], c[2] - cam[2]};

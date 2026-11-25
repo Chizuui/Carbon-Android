@@ -111,7 +111,20 @@ target_include_directories(main PRIVATE ${NATIVE}/compat ${SDK}/harness/compat $
                            ${adrenotools_SOURCE_DIR}/include)
 target_include_directories(main SYSTEM PRIVATE ${imgui_SOURCE_DIR})
 # x86 chars are signed, as the game's code and the runtime were written for
-target_compile_options(main PRIVATE -fno-strict-aliasing -fsigned-char -ffunction-sections -fdata-sections -flto=thin)
+set(XBE_PGO_MODE "" CACHE STRING "PGO mode: generate or use")
+set(XBE_PGO_PROFILE "" CACHE FILEPATH "Merged .profdata path for XBE_PGO_MODE=use")
+if(XBE_PGO_MODE STREQUAL "generate")
+    target_compile_options(main PRIVATE -fno-strict-aliasing -fsigned-char -ffunction-sections -fdata-sections -fprofile-generate)
+    target_compile_definitions(main PRIVATE XBE_PGO_GENERATE=1)
+elseif(XBE_PGO_MODE STREQUAL "use")
+    if(NOT XBE_PGO_PROFILE OR NOT EXISTS "${XBE_PGO_PROFILE}")
+        message(FATAL_ERROR "XBE_PGO_MODE=use requires existing XBE_PGO_PROFILE")
+    endif()
+    target_compile_options(main PRIVATE -fno-strict-aliasing -fsigned-char -ffunction-sections -fdata-sections -flto=thin
+                           -fprofile-use=${XBE_PGO_PROFILE} -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date)
+else()
+    target_compile_options(main PRIVATE -fno-strict-aliasing -fsigned-char -ffunction-sections -fdata-sections -flto=thin)
+endif()
 set(HOST_SOURCES ${RUNTIME_SOURCES} ${GAME_HOST_SOURCES} ${ANDROID_SOURCES})
 set_source_files_properties(${HOST_SOURCES} PROPERTIES COMPILE_OPTIONS "-include;${NATIVE}/compat/crt.h")
 set_source_files_properties(${GEN_SOURCES} PROPERTIES
@@ -132,5 +145,13 @@ if(XBE_SHARED_DIR)
                                XBE_SETTINGS="${XBE_SETTINGS}" XBE_LOG="${XBE_LOG}")
 endif()
 # 16 KB pages, as Android 15 devices may have
-target_link_options(main PRIVATE -Wl,-z,max-page-size=16384 -Wl,--gc-sections -flto=thin -Wl,--icf=safe
-                    -Wl,--thinlto-cache-dir=${CMAKE_CURRENT_BINARY_DIR}/thinlto-cache)
+if(XBE_PGO_MODE STREQUAL "generate")
+    target_link_options(main PRIVATE -Wl,-z,max-page-size=16384 -Wl,--gc-sections -fprofile-generate)
+elseif(XBE_PGO_MODE STREQUAL "use")
+    target_link_options(main PRIVATE -Wl,-z,max-page-size=16384 -Wl,--gc-sections -flto=thin -Wl,--icf=safe
+                        -Wl,--thinlto-cache-dir=${CMAKE_CURRENT_BINARY_DIR}/thinlto-cache
+                        -fprofile-use=${XBE_PGO_PROFILE})
+else()
+    target_link_options(main PRIVATE -Wl,-z,max-page-size=16384 -Wl,--gc-sections -flto=thin -Wl,--icf=safe
+                        -Wl,--thinlto-cache-dir=${CMAKE_CURRENT_BINARY_DIR}/thinlto-cache)
+endif()

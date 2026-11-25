@@ -74,6 +74,12 @@ android {
                 if (project.hasProperty("xbeGameDir")) arguments "-DXBE_GAME_DIR=${project.xbeGameDir}"
                 arguments "-DXBE_SHARED_DIR=${game.dir}", "-DXBE_GAME_LABEL=${game.label}", "-DXBE_SETTINGS=${game.settings}", "-DXBE_LOG=${game.log}"
                 if (project.hasProperty("verboseLog")) arguments "-DXBE_VERBOSE_LOG=ON"
+                if (project.hasProperty("pgo")) {
+                    arguments "-DXBE_PGO_MODE=${project.pgo}"
+                    if (project.hasProperty("pgoProfile")) {
+                        arguments "-DXBE_PGO_PROFILE=${project.file("../" + project.pgoProfile).absolutePath}"
+                    }
+                }
             }
         }
     }

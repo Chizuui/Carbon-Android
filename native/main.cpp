@@ -471,15 +471,35 @@ std::filesystem::path LogDir() {
     return app::ExeDir() / "logs";
 }
 
+#ifdef XBE_PGO_GENERATE
+extern "C" {
+void __llvm_profile_set_filename(const char* name);
+int __llvm_profile_write_file(void);
+}
+static std::string g_pgo_path;
+static void FlushPgoProfile() {
+    if (g_pgo_path.empty()) return;
+    int rc = __llvm_profile_write_file();
+    LOGR("pgo: wrote %s (rc=%d)", g_pgo_path.c_str(), rc);
+    logx::Flush();
+}
+#endif
+
 void Dispatch(const SDL_Event& e) {
     switch (e.type) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_TERMINATING:
+#ifdef XBE_PGO_GENERATE
+            FlushPgoProfile();
+#endif
             logx::Flush();
             kernel::Shutdown(0);
             break;
         case SDL_EVENT_WILL_ENTER_BACKGROUND:
             SetForeground(false);
+#ifdef XBE_PGO_GENERATE
+            FlushPgoProfile();
+#endif
             break;
         case SDL_EVENT_DID_ENTER_FOREGROUND:
             SetForeground(true);
@@ -521,6 +541,11 @@ int main(int, char**) {
     // a file named perf in the app's folder: the perf log lines, as XBE_PERF gives them on a PC
     if (std::error_code ec; std::filesystem::exists(app::ExeDir() / "perf", ec)) setenv("XBE_PERF", "1", 1);
     logx::Init(LogDir().string(), app::kGame.log);
+#ifdef XBE_PGO_GENERATE
+    g_pgo_path = (LogDir() / "carbon.profraw").string();
+    __llvm_profile_set_filename(g_pgo_path.c_str());
+    LOGR("pgo: instrumented build, profile output -> %s", g_pgo_path.c_str());
+#endif
     InstallCrashHandlers(logx::Path());
     LOGR("app: log %s", logx::Path().c_str());
     if (!logx::PrevPath().empty()) LOGR("app: previous log %s", logx::PrevPath().c_str());

@@ -1509,7 +1509,7 @@ void LogNativeHeadlightDraw(const char* kind, uint32_t prim, uint32_t count) {
     for (int st = 0; st < 4; st++) {
         if (g_state.textures[st] != hl_tex) continue;
         static int hl_draws = 0;
-        if (hl_draws < 6) {
+        if (hl_draws < 2) {
             hl_draws++;
             uint32_t tci = g_state.tss[st][gpu::kTssTexCoordIndex];
             uint32_t ttf = g_state.tss[st][gpu::kTssTextureTransformFlags];
@@ -1519,11 +1519,15 @@ void LogNativeHeadlightDraw(const char* kind, uint32_t prim, uint32_t count) {
             LOGR("d3d: native HEADLIGHTS draw %s prim=%u count=%u stage=%d tex=%08X vs=%08X ps=%08X tci=%X ttf=%X cop=%u c0=%08X c1=%08X vs_insns=%zu",
                  kind, prim, count, st, hl_tex, g_state.vs_handle, g_state.ps ? g_state.ps->handle : 0, tci, ttf, cop, c0, c1,
                  g_state.vs ? g_state.vs->program.size() / 4 : 0);
-            if (g_state.ps) {
-                LOGR("d3d: native HEADLIGHTS ps texmodes=%08X combcount=%08X final_abcd=%08X final_efgh=%08X d0=%08X d1=%08X d2=%08X d3=%08X",
-                     g_state.ps->def[16], g_state.ps->def[17], g_state.ps->def[18], g_state.ps->def[19],
-                     g_state.ps->def[0], g_state.ps->def[1], g_state.ps->def[2], g_state.ps->def[3]);
-            }
+            uint32_t comb = g_state.simple[gpu::kMPsCombinerCount >> 2];
+            uint32_t rgb0 = g_state.simple[gpu::kMPsRgbInputs >> 2];
+            uint32_t rgb1 = g_state.simple[(gpu::kMPsRgbInputs + 4) >> 2];
+            uint32_t out0 = g_state.simple[gpu::kMPsRgbOutputs >> 2];
+            uint32_t out1 = g_state.simple[(gpu::kMPsRgbOutputs + 4) >> 2];
+            uint32_t fabcd = g_state.simple[gpu::kMPsFinalAbcd >> 2];
+            uint32_t fefgh = g_state.simple[gpu::kMPsFinalEfgh >> 2];
+            LOGR("d3d: native HEADLIGHTS comb=%08X rgb=(%08X,%08X) out=(%08X,%08X) final=(%08X,%08X)",
+                 comb, rgb0, rgb1, out0, out1, fabcd, fefgh);
             if (hl_draws == 1) {
                 for (int ci : {58, 59, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107}) {
                     LOGR("d3d: native HEADLIGHTS c[%d] = %.4f %.4f %.4f %.4f", ci - 96, g_state.vsc[ci][0],
@@ -1884,10 +1888,6 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                 size_t insns = g_state.vs->program.size() / 4;
                 LOGR("d3d: flare vs inputs%s stride0=%u insns=%zu type=%X", in.c_str(),
                      g_state.vs->stream_stride[0], insns, g_state.vs->program_type);
-                for (size_t idx = 0; idx < std::min<size_t>(insns, 24); idx++) {
-                    const uint32_t* p = &g_state.vs->program[idx * 4];
-                    LOGR("d3d: flare vs ins[%zu] = %08X %08X %08X %08X", idx, p[0], p[1], p[2], p[3]);
-                }
             }
             if (prim == 7 && count == 4 && stride == 32) {
                 uint32_t u[8];

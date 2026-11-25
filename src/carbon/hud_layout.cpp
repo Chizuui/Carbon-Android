@@ -114,21 +114,6 @@ bool IsCommittedRange(uint32_t va, uint32_t size);  // defined in carbon.cpp
 
 uint32_t g_minimap_obj = 0;  // Hud_Minimap game object, cached from 158520/165C00 hooks (ctx.ecx)
 
-// Shift the FEng position (+0x1C/+0x20) of the 30 road objects (0x46AB28, stride 0x14) and
-// [minimap+0x30] via Move(), NOT data[0..15] (which holds RGBA colour, not coordinates).
-void ShiftRoadPositions(std::unordered_map<uint32_t, Moved>& seen) {
-    constexpr uint32_t kRoadArray = 0x46AB28;
-    for (int i = 0; i < 30; i++) {
-        uint32_t obj = Peek(kRoadArray + uint32_t(i) * 0x14u);
-        if (!obj) continue;
-        Move(Peek(obj + kObjectData), kHudMinimap, seen);
-    }
-    if (g_minimap_obj && IsCommittedRange(g_minimap_obj, 0x34)) {
-        uint32_t rect_obj = kernel::R32(g_minimap_obj + 0x30u);
-        if (rect_obj) Move(Peek(rect_obj + kObjectData), kHudMinimap, seen);
-    }
-}
-
 void ApplyHudLayout() {
     std::lock_guard<std::mutex> lock(g_hud_mtx);
     uint32_t cfeng = Peek(kCFEng), fe = cfeng ? Peek(cfeng) : 0;
@@ -139,7 +124,6 @@ void ApplyHudLayout() {
         int budget = kMaxObjects;
         Walk(Peek(p + kPackageObjects), -1, budget, seen);
     }
-    ShiftRoadPositions(seen);
     g_moved.swap(seen);  // a package gone forgets its objects
 }
 

@@ -477,11 +477,20 @@ void __llvm_profile_set_filename(const char* name);
 int __llvm_profile_write_file(void);
 }
 static std::string g_pgo_path;
-static void FlushPgoProfile() {
+static std::mutex g_pgo_lock;
+static void FlushPgoProfile(const char* reason) {
+    std::lock_guard lock(g_pgo_lock);
     if (g_pgo_path.empty()) return;
     int rc = __llvm_profile_write_file();
-    LOGR("pgo: wrote %s (rc=%d)", g_pgo_path.c_str(), rc);
+    LOGR("pgo: wrote %s (rc=%d, reason=%s)", g_pgo_path.c_str(), rc, reason);
     logx::Flush();
+}
+static bool SDLCALL PgoEventWatch(void*, SDL_Event* e) {
+    if (e->type == SDL_EVENT_WILL_ENTER_BACKGROUND || e->type == SDL_EVENT_DID_ENTER_BACKGROUND ||
+        e->type == SDL_EVENT_TERMINATING || e->type == SDL_EVENT_QUIT) {
+        FlushPgoProfile("lifecycle");
+    }
+    return true;
 }
 #endif
 
@@ -490,7 +499,7 @@ void Dispatch(const SDL_Event& e) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_TERMINATING:
 #ifdef XBE_PGO_GENERATE
-            FlushPgoProfile();
+            FlushPgoProfile("quit");
 #endif
             logx::Flush();
             kernel::Shutdown(0);
@@ -498,7 +507,7 @@ void Dispatch(const SDL_Event& e) {
         case SDL_EVENT_WILL_ENTER_BACKGROUND:
             SetForeground(false);
 #ifdef XBE_PGO_GENERATE
-            FlushPgoProfile();
+            FlushPgoProfile("background");
 #endif
             break;
         case SDL_EVENT_DID_ENTER_FOREGROUND:
@@ -544,6 +553,7 @@ int main(int, char**) {
 #ifdef XBE_PGO_GENERATE
     g_pgo_path = (LogDir() / "carbon.profraw").string();
     __llvm_profile_set_filename(g_pgo_path.c_str());
+    SDL_AddEventWatch(PgoEventWatch, nullptr);
     LOGR("pgo: instrumented build, profile output -> %s", g_pgo_path.c_str());
 #endif
     InstallCrashHandlers(logx::Path());
@@ -584,5 +594,13 @@ int main(int, char**) {
             while (SDL_PollEvent(&e)) Dispatch(e);
         }
         touch::Pump();
+#ifdef XBE_PGO_GENERATE
+        static uint64_t next_pgo_flush = 0;
+        uint64_t now_ms = SDL_GetTicks();
+        if (now_ms >= next_pgo_flush) {
+            next_pgo_flush = now_ms + 30000;
+            if (now_ms >= 30000) FlushPgoProfile("periodic");
+        }
+#endif
     }
 }

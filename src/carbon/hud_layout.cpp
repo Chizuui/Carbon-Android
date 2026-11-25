@@ -5,7 +5,6 @@
 // places each frame (the map scrolls its track) and the package's scripts others, so they are moved after the FEng
 // is updated, the last writer before the drawing; and a place found other than as it was left is the game's new one,
 // moved again from there
-#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <mutex>
@@ -62,9 +61,6 @@ struct Moved {
 };
 std::unordered_map<uint32_t, Moved> g_moved;  // by the object's data
 std::mutex g_hud_mtx;
-std::atomic<float> g_track_map_x{0.0f};
-std::atomic<float> g_track_map_y{0.0f};
-std::atomic<bool> g_track_map_valid{false};
 
 uint32_t Peek(uint32_t va) { return va && mem::IsCommitted(va) && mem::IsCommitted(va + 3) ? kernel::R32(va) : 0; }
 
@@ -98,15 +94,7 @@ void Walk(uint32_t first, int count, int& budget, std::unordered_map<uint32_t, M
         bool piece = false;
         for (const Piece& p : kPieces)
             if (p.hash == hash) {
-                uint32_t data = Peek(o + kObjectData);
-                Move(data, p.item, seen);
-                if (p.hash == 0x0F365871u) {
-                    if (auto it = seen.find(data); it != seen.end()) {
-                        g_track_map_x.store(it->second.set_x, std::memory_order_relaxed);
-                        g_track_map_y.store(it->second.set_y, std::memory_order_relaxed);
-                        g_track_map_valid.store(true, std::memory_order_relaxed);
-                    }
-                }
+                Move(Peek(o + kObjectData), p.item, seen);
                 piece = true;
             }
         if (!piece && Peek(o + kObjectType) == kTypeGroup) Walk(Peek(o + kGroupObjects), int(Peek(o + kGroupCount)), budget, seen);
@@ -281,41 +269,6 @@ struct FreeRoamRoadScope {
     }
 };
 
-struct MinimapOriginScope {
-    uint32_t obj = 0;
-    float orig_x = 0.0f, orig_y = 0.0f;
-    bool active = false;
-
-    explicit MinimapOriginScope(uint32_t minimap) : obj(minimap) {
-        constexpr uint32_t kMinimapOriginX = 0xB4, kMinimapOriginY = 0xB8;
-        if (!obj || !mem::IsCommitted(obj + kMinimapOriginX) || !mem::IsCommitted(obj + kMinimapOriginY + 3)) return;
-        orig_x = Float(obj + kMinimapOriginX);
-        orig_y = Float(obj + kMinimapOriginY);
-        float target_x, target_y;
-        if (g_track_map_valid.load(std::memory_order_relaxed)) {
-            target_x = g_track_map_x.load(std::memory_order_relaxed);
-            target_y = g_track_map_y.load(std::memory_order_relaxed);
-        } else {
-            float dx = g_hud_x[kHudMinimap].load(std::memory_order_relaxed);
-            float dy = g_hud_y[kHudMinimap].load(std::memory_order_relaxed);
-            if (dx == 0.0f && dy == 0.0f) return;
-            target_x = orig_x + dx;
-            target_y = orig_y + dy;
-        }
-        if (orig_x == target_x && orig_y == target_y) return;
-        SetFloat(obj + kMinimapOriginX, target_x);
-        SetFloat(obj + kMinimapOriginY, target_y);
-        active = true;
-    }
-
-    ~MinimapOriginScope() {
-        constexpr uint32_t kMinimapOriginX = 0xB4, kMinimapOriginY = 0xB8;
-        if (!active) return;
-        SetFloat(obj + kMinimapOriginX, orig_x);
-        SetFloat(obj + kMinimapOriginY, orig_y);
-    }
-};
-
 }  // namespace game
 
 // FEngine::UpdateAllPackages (thiscall, 0 args): called by cFEng::Service (0x14D990) after HUD elements write
@@ -326,12 +279,9 @@ X86_FUNC(sub_0014D8B0) {
     game::ApplyHudLayout();
 }
 
-// Hud_Minimap GPS route rebuild & render read cached TRACK_MAP coordinates at +0xB4/+0xB8 directly instead of
-// FEng object positions; shift them only for those calls so helper methods reading +0xB4/+0xB8 aren't double-shifted.
 X86_EXTERN_FUNC(__imp__sub_00158520);
 X86_FUNC(sub_00158520) {
     game::g_minimap_obj = ctx.ecx;
-    game::MinimapOriginScope scope(ctx.ecx);
     game::NoRouteRoadScope route(ctx, base);
     game::FreeRoamRoadScope mark(ctx, base, ctx.ecx);
     __imp__sub_00158520(ctx, base);
@@ -339,7 +289,6 @@ X86_FUNC(sub_00158520) {
 
 X86_EXTERN_FUNC(__imp__sub_00158AE0);
 X86_FUNC(sub_00158AE0) {
-    game::MinimapOriginScope scope(ctx.ecx);
     __imp__sub_00158AE0(ctx, base);
 }
 
@@ -401,13 +350,11 @@ X86_FUNC(sub_0019C580) {
 
 X86_EXTERN_FUNC(__imp__sub_001581D0);
 X86_FUNC(sub_001581D0) {
-    game::MinimapOriginScope scope(ctx.ecx);
     __imp__sub_001581D0(ctx, base);
 }
 
 X86_EXTERN_FUNC(__imp__sub_00165C00);
 X86_FUNC(sub_00165C00) {
     game::g_minimap_obj = ctx.ecx;
-    game::MinimapOriginScope scope(ctx.ecx);
     __imp__sub_00165C00(ctx, base);
 }

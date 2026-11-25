@@ -269,6 +269,36 @@ struct FreeRoamRoadScope {
     }
 };
 
+// The yellow route polyline ([minimap+0x158]) is rendered directly in screen space by sub_00158AE0
+// (and its clip rect initialized in sub_00158520) using [minimap+0xB4/+0xB8], bypassing FEng group
+// transforms. Shift +0xB4/+0xB8 ONLY for those two calls — NOT for sub_001581D0 or sub_00165C00,
+// whose FEng child objects already inherit the parent group shift from ApplyHudLayout().
+struct MinimapRouteOriginScope {
+    uint32_t obj = 0;
+    float orig_x = 0.0f, orig_y = 0.0f;
+    bool active = false;
+
+    explicit MinimapRouteOriginScope(uint32_t minimap) : obj(minimap) {
+        constexpr uint32_t kMinimapOriginX = 0xB4, kMinimapOriginY = 0xB8;
+        if (!obj || !mem::IsCommitted(obj + kMinimapOriginX) || !mem::IsCommitted(obj + kMinimapOriginY + 3)) return;
+        float dx = g_hud_x[kHudMinimap].load(std::memory_order_relaxed);
+        float dy = g_hud_y[kHudMinimap].load(std::memory_order_relaxed);
+        if (dx == 0.0f && dy == 0.0f) return;
+        orig_x = Float(obj + kMinimapOriginX);
+        orig_y = Float(obj + kMinimapOriginY);
+        SetFloat(obj + kMinimapOriginX, orig_x + dx);
+        SetFloat(obj + kMinimapOriginY, orig_y + dy);
+        active = true;
+    }
+
+    ~MinimapRouteOriginScope() {
+        constexpr uint32_t kMinimapOriginX = 0xB4, kMinimapOriginY = 0xB8;
+        if (!active) return;
+        SetFloat(obj + kMinimapOriginX, orig_x);
+        SetFloat(obj + kMinimapOriginY, orig_y);
+    }
+};
+
 }  // namespace game
 
 // FEngine::UpdateAllPackages (thiscall, 0 args): called by cFEng::Service (0x14D990) after HUD elements write
@@ -282,6 +312,7 @@ X86_FUNC(sub_0014D8B0) {
 X86_EXTERN_FUNC(__imp__sub_00158520);
 X86_FUNC(sub_00158520) {
     game::g_minimap_obj = ctx.ecx;
+    game::MinimapRouteOriginScope origin_scope(ctx.ecx);
     game::NoRouteRoadScope route(ctx, base);
     game::FreeRoamRoadScope mark(ctx, base, ctx.ecx);
     __imp__sub_00158520(ctx, base);
@@ -289,6 +320,7 @@ X86_FUNC(sub_00158520) {
 
 X86_EXTERN_FUNC(__imp__sub_00158AE0);
 X86_FUNC(sub_00158AE0) {
+    game::MinimapRouteOriginScope origin_scope(ctx.ecx);
     __imp__sub_00158AE0(ctx, base);
 }
 

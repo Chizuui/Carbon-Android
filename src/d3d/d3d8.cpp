@@ -1955,16 +1955,14 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
             }
         }
     }
+    if (game::g_flare_pass && prim == 5 && count == 3 && stride == 24) {
+        if (g_backend) g_backend->Clear(g_state, 0, nullptr, gpu::kClearTarget, 0x00000000u, 1.0f, 0);
+        g_state.streams[0] = stream;
+        return;
+    }
     g_state.streams[0] = {UpVertices(draw_vertices, count * stride), stride};
     CountTarget(false, count);
-    if (game::g_flare_pass && prim == 5 && count == 3 && stride == 24) {
-        uint32_t saved_cull = g_state.rs[gpu::kRsCullMode];
-        g_state.rs[gpu::kRsCullMode] = 0;
-        g_backend->Draw(g_state, prim, 0, count, nullptr);
-        g_state.rs[gpu::kRsCullMode] = saved_cull;
-    } else {
-        g_backend->Draw(g_state, prim, 0, count, nullptr);
-    }
+    g_backend->Draw(g_state, prim, 0, count, nullptr);
     g_state.streams[0] = stream;
 }
 

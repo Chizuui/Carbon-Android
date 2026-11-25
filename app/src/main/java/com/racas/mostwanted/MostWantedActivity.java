@@ -22,7 +22,6 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.widget.Toast;
-import androidx.core.content.FileProvider;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -450,7 +449,7 @@ public class MostWantedActivity extends SDLActivity {
                         zos.closeEntry();
                     }
                 }
-                Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", zip);
+                Uri uri = LogFileProvider.getUriForFile(this, zip);
                 Intent send = new Intent(Intent.ACTION_SEND);
                 send.setType("application/zip");
                 send.putExtra(Intent.EXTRA_STREAM, uri);

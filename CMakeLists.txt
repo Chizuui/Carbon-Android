@@ -111,7 +111,7 @@ target_include_directories(main PRIVATE ${NATIVE}/compat ${SDK}/harness/compat $
                            ${adrenotools_SOURCE_DIR}/include)
 target_include_directories(main SYSTEM PRIVATE ${imgui_SOURCE_DIR})
 # x86 chars are signed, as the game's code and the runtime were written for
-target_compile_options(main PRIVATE -fno-strict-aliasing -fsigned-char)
+target_compile_options(main PRIVATE -fno-strict-aliasing -fsigned-char -ffunction-sections -fdata-sections)
 set(HOST_SOURCES ${RUNTIME_SOURCES} ${GAME_HOST_SOURCES} ${ANDROID_SOURCES})
 set_source_files_properties(${HOST_SOURCES} PROPERTIES COMPILE_OPTIONS "-include;${NATIVE}/compat/crt.h")
 set_source_files_properties(${GEN_SOURCES} PROPERTIES
@@ -132,4 +132,4 @@ if(XBE_SHARED_DIR)
                                XBE_SETTINGS="${XBE_SETTINGS}" XBE_LOG="${XBE_LOG}")
 endif()
 # 16 KB pages, as Android 15 devices may have
-target_link_options(main PRIVATE -Wl,-z,max-page-size=16384)
+target_link_options(main PRIVATE -Wl,-z,max-page-size=16384 -Wl,--gc-sections)

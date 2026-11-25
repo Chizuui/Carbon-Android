@@ -50,13 +50,9 @@
         <!-- EXPORT LOG share sheet: serves the exported log file(s) to other apps (Discord, Telegram, ...).
              file:// URIs are blocked since Android 7, so the share intent gets a content:// URI from here. -->
         <provider
-            android:name="androidx.core.content.FileProvider"
+            android:name=".LogFileProvider"
             android:authorities="${applicationId}.fileprovider"
             android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
+            android:grantUriPermissions="true" />
     </application>
 </manifest>

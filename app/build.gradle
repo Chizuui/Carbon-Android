@@ -129,6 +129,5 @@ android {
 }
 
 dependencies {
-    // EXPORT LOG share sheet: FileProvider serves the exported log file(s) to other apps
-    implementation "androidx.core:core:1.13.1"
+    // No external Java/AndroidX libraries; LogFileProvider handles content:// log sharing directly.
 }

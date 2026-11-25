@@ -1850,9 +1850,9 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
         static int flare_pass_dumps = 0;
         if (flare_pass_dumps < 12) {
             flare_pass_dumps++;
-            LOGR("d3d: flare pass draw prim %u count %u stride %u vs %08X vp %ux%u z_en=%u bcol=%08X tex0=%08X rt=%08X",
+            LOGR("d3d: flare pass draw prim %u count %u stride %u vs %08X vp %ux%u z_en=%u cull=%X bcol=%08X tex0=%08X rt=%08X",
                  prim, count, stride, g_state.vs_handle, g_state.viewport.w, g_state.viewport.h,
-                 g_state.rs[gpu::kRsZEnable], g_state.simple[gpu::kMBlendColor >> 2],
+                 g_state.rs[gpu::kRsZEnable], g_state.rs[gpu::kRsCullMode], g_state.simple[gpu::kMBlendColor >> 2],
                  g_state.textures[0], g_state.rt.data);
             if (prim == 7 && count == 4 && stride == 32) {
                 const uint8_t* b = static_cast<const uint8_t*>(vertices);
@@ -1957,7 +1957,14 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
     }
     g_state.streams[0] = {UpVertices(draw_vertices, count * stride), stride};
     CountTarget(false, count);
-    g_backend->Draw(g_state, prim, 0, count, nullptr);
+    if (game::g_flare_pass && prim == 5 && count == 3 && stride == 24) {
+        uint32_t saved_cull = g_state.rs[gpu::kRsCullMode];
+        g_state.rs[gpu::kRsCullMode] = 0;
+        g_backend->Draw(g_state, prim, 0, count, nullptr);
+        g_state.rs[gpu::kRsCullMode] = saved_cull;
+    } else {
+        g_backend->Draw(g_state, prim, 0, count, nullptr);
+    }
     g_state.streams[0] = stream;
 }
 

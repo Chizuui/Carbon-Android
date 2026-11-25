@@ -1956,6 +1956,25 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
         }
     }
     if (game::g_flare_pass && prim == 5 && count == 3 && stride == 24) {
+        uint32_t bcol = g_state.simple[gpu::kMBlendColor >> 2];
+        static int prim5_zero_logs = 0, prim5_move_logs = 0;
+        if ((bcol == 0 && prim5_zero_logs++ < 1) || (bcol != 0 && prim5_move_logs++ < 2)) {
+            LOGR("d3d: prim5 diag bcol=%08X blend=%u(%X,%X,%X) at=%u(%X,%u) cw=%08X cull=%X sc=%u vp=%u,%u %ux%u",
+                 bcol, g_state.simple[gpu::kMBlendEnable >> 2], g_state.simple[gpu::kMSrcBlend >> 2],
+                 g_state.simple[gpu::kMDestBlend >> 2], g_state.simple[gpu::kMBlendOp >> 2],
+                 g_state.simple[gpu::kMAlphaTestEnable >> 2], g_state.simple[gpu::kMAlphaFunc >> 2],
+                 g_state.simple[gpu::kMAlphaRef >> 2], g_state.simple[gpu::kMColorWriteEnable >> 2],
+                 g_state.rs[gpu::kRsCullMode], g_state.scissor_count,
+                 g_state.viewport.x, g_state.viewport.y, g_state.viewport.w, g_state.viewport.h);
+            LOGR("d3d: prim5 c0=(%.3f,%.3f,%.3f,%.3f) c1=(%.3f,%.3f,%.3f,%.3f) c2=(%.3f,%.3f,%.3f,%.3f) c3=(%.3f,%.3f,%.3f,%.3f)",
+                 g_state.vsc[96][0], g_state.vsc[96][1], g_state.vsc[96][2], g_state.vsc[96][3],
+                 g_state.vsc[97][0], g_state.vsc[97][1], g_state.vsc[97][2], g_state.vsc[97][3],
+                 g_state.vsc[98][0], g_state.vsc[98][1], g_state.vsc[98][2], g_state.vsc[98][3],
+                 g_state.vsc[99][0], g_state.vsc[99][1], g_state.vsc[99][2], g_state.vsc[99][3]);
+            LOGR("d3d: prim5 c64=(%.3f,%.3f,%.3f,%.3f) c65=(%.3f,%.3f,%.3f,%.3f)",
+                 g_state.vsc[160][0], g_state.vsc[160][1], g_state.vsc[160][2], g_state.vsc[160][3],
+                 g_state.vsc[161][0], g_state.vsc[161][1], g_state.vsc[161][2], g_state.vsc[161][3]);
+        }
         if (g_backend) g_backend->Clear(g_state, 0, nullptr, gpu::kClearTarget, 0x00000000u, 1.0f, 0);
         g_state.streams[0] = stream;
         return;

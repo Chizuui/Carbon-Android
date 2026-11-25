@@ -1490,9 +1490,44 @@ HLE_STDCALL(D3DDevice_SetPixelShaderConstant, 3) {
 
 // drawing
 
+void LogNativeHeadlightDraw(const char* kind, uint32_t prim, uint32_t count) {
+    if (!game::Racing()) return;
+    uint32_t hl_info = R32(0x0045D328u);
+    uint32_t hl_obj = (hl_info >= 0x10000u && hl_info < 0x08000000u) ? R32(hl_info) : 0;
+    uint32_t hl_tex = (hl_obj >= 0x10000u && hl_obj < 0x08000000u) ? (hl_obj + 0x14u) : 0;
+    static bool logged_hl_addr = false;
+    if (!logged_hl_addr) {
+        logged_hl_addr = true;
+        LOGR("d3d: native HEADLIGHTS addr info=%08X obj=%08X tex=%08X", hl_info, hl_obj, hl_tex);
+    }
+    if (!hl_tex) return;
+    for (int st = 0; st < 4; st++) {
+        if (g_state.textures[st] != hl_tex) continue;
+        static int hl_draws = 0;
+        if (hl_draws < 6) {
+            hl_draws++;
+            uint32_t tci = g_state.tss[st][gpu::kTssTexCoordIndex];
+            uint32_t ttf = g_state.tss[st][gpu::kTssTextureTransformFlags];
+            uint32_t cop = g_state.tss[st][gpu::kTssColorOp];
+            uint32_t c0 = g_state.simple[gpu::kMPsConstant0 >> 2];
+            uint32_t c1 = g_state.simple[(gpu::kMPsConstant0 + 4) >> 2];
+            LOGR("d3d: native HEADLIGHTS draw %s prim=%u count=%u stage=%d tex=%08X vs=%08X ps=%08X tci=%X ttf=%X cop=%u c0=%08X c1=%08X vs_insns=%zu",
+                 kind, prim, count, st, hl_tex, g_state.vs_handle, g_state.ps ? g_state.ps->handle : 0, tci, ttf, cop, c0, c1,
+                 g_state.vs ? g_state.vs->program.size() / 4 : 0);
+            if (g_state.ps) {
+                LOGR("d3d: native HEADLIGHTS ps texmodes=%08X combcount=%08X final_abcd=%08X final_efgh=%08X d0=%08X d1=%08X d2=%08X d3=%08X",
+                     g_state.ps->def[16], g_state.ps->def[17], g_state.ps->def[18], g_state.ps->def[19],
+                     g_state.ps->def[0], g_state.ps->def[1], g_state.ps->def[2], g_state.ps->def[3]);
+            }
+        }
+        break;
+    }
+}
+
 HLE_STDCALL(D3DDevice_DrawVertices, 3) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     SyncDeferred();
+    LogNativeHeadlightDraw("V", a[0], a[2]);
     CountTarget(false, a[2]);
     if (g_trace && (g_state.vs_handle & 1) && g_state.vs && g_state.streams[0].vb && a[2] <= 8) {
         static int dumps = 0;
@@ -1523,6 +1558,7 @@ HLE_STDCALL(D3DDevice_DrawVertices, 3) {
 HLE_STDCALL(D3DDevice_DrawIndexedVertices, 3) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     SyncDeferred();
+    LogNativeHeadlightDraw("IV", a[0], a[1]);
     const uint8_t* indices = a[2] ? static_cast<const uint8_t*>(HostPtr(a[2])) : nullptr;
     CountTarget(false, a[1]);
     if (g_backend) g_backend->Draw(g_state, a[0], 0, a[1], indices);
@@ -1816,6 +1852,33 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
     // the flare pass (sub_0010EC90) draws its quads and trails here; log what it actually draws, so the next
     // clamp targets the real pattern instead of the bloom copies
     if (game::g_flare_pass) {
+        static std::set<uint64_t> flare_vs_logged;
+        uint64_t fkey = (uint64_t(prim) << 32) | (uint64_t(count) << 16) | stride;
+        if (flare_vs_logged.size() < 6 && flare_vs_logged.insert(fkey).second) {
+            LOGR("d3d: flare vs dump prim=%u count=%u stride=%u rt=%08X zs=%08X tex0=%08X blend=%u(%X,%X,%X) vs=%08X ps=%08X",
+                 prim, count, stride, g_state.rt.data, g_state.zs.data, g_state.textures[0],
+                 g_state.simple[gpu::kMBlendEnable >> 2], g_state.simple[gpu::kMSrcBlend >> 2],
+                 g_state.simple[gpu::kMDestBlend >> 2], g_state.simple[gpu::kMBlendOp >> 2],
+                 g_state.vs_handle, g_state.ps ? g_state.ps->handle : 0);
+            if (g_state.vs) {
+                std::string in;
+                for (int r = 0; r < 16; r++) {
+                    if (g_state.vs->inputs[r].stream >= 0) {
+                        char buf[48];
+                        std::snprintf(buf, sizeof(buf), " r%d@%u:%u:s%d", r, g_state.vs->inputs[r].offset,
+                                      g_state.vs->inputs[r].type, g_state.vs->inputs[r].stream);
+                        in += buf;
+                    }
+                }
+                size_t insns = g_state.vs->program.size() / 4;
+                LOGR("d3d: flare vs inputs%s stride0=%u insns=%zu type=%X", in.c_str(),
+                     g_state.vs->stream_stride[0], insns, g_state.vs->program_type);
+                for (size_t idx = 0; idx < std::min<size_t>(insns, 24); idx++) {
+                    const uint32_t* p = &g_state.vs->program[idx * 4];
+                    LOGR("d3d: flare vs ins[%zu] = %08X %08X %08X %08X", idx, p[0], p[1], p[2], p[3]);
+                }
+            }
+        }
         if (prim == 7 && count == 4 && stride == 32) {
             for (int r = 0; r < 4; r++)
                 for (int c = 0; c < 4; c++) g_pool_vp[r * 4 + c] = g_state.vsc[96 + r][c];
@@ -1913,7 +1976,6 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
         }
         float w = maxx - minx, h = maxy - miny;
         if (vw > 0 && vh > 0 && w >= vw * 0.9f && h >= vh * 0.4f) {
-            if (game::Opt().headlights && game::Racing()) DrawHeadlightPool();
             return;
         }
     }

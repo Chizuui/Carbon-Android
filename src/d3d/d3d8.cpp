@@ -1492,13 +1492,18 @@ HLE_STDCALL(D3DDevice_SetPixelShaderConstant, 3) {
 
 void LogNativeHeadlightDraw(const char* kind, uint32_t prim, uint32_t count) {
     if (!game::Racing()) return;
+    auto valid_ptr = [](uint32_t p) { return p >= 0x10000u && (p & 0x7FFFFFFFu) < 0x08000000u; };
     uint32_t hl_info = R32(0x0045D328u);
-    uint32_t hl_obj = (hl_info >= 0x10000u && hl_info < 0x08000000u) ? R32(hl_info) : 0;
-    uint32_t hl_tex = (hl_obj >= 0x10000u && hl_obj < 0x08000000u) ? (hl_obj + 0x14u) : 0;
+    uint32_t hl_obj = valid_ptr(hl_info) ? R32(hl_info) : 0;
+    uint32_t hl_tex = valid_ptr(hl_obj) ? (hl_obj + 0x14u) : 0;
     static bool logged_hl_addr = false;
     if (!logged_hl_addr) {
         logged_hl_addr = true;
-        LOGR("d3d: native HEADLIGHTS addr info=%08X obj=%08X tex=%08X", hl_info, hl_obj, hl_tex);
+        uint32_t data = hl_tex ? R32(hl_tex + kResData) : 0;
+        uint32_t fmt = hl_tex ? R32(hl_tex + kContainerFormat) : 0;
+        uint32_t sz = hl_tex ? R32(hl_tex + kContainerSize) : 0;
+        LOGR("d3d: native HEADLIGHTS addr info=%08X obj=%08X tex=%08X data=%08X fmt=%08X sz=%08X", hl_info, hl_obj,
+             hl_tex, data, fmt, sz);
     }
     if (!hl_tex) return;
     for (int st = 0; st < 4; st++) {
@@ -1518,6 +1523,12 @@ void LogNativeHeadlightDraw(const char* kind, uint32_t prim, uint32_t count) {
                 LOGR("d3d: native HEADLIGHTS ps texmodes=%08X combcount=%08X final_abcd=%08X final_efgh=%08X d0=%08X d1=%08X d2=%08X d3=%08X",
                      g_state.ps->def[16], g_state.ps->def[17], g_state.ps->def[18], g_state.ps->def[19],
                      g_state.ps->def[0], g_state.ps->def[1], g_state.ps->def[2], g_state.ps->def[3]);
+            }
+            if (hl_draws == 1) {
+                for (int ci : {58, 59, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107}) {
+                    LOGR("d3d: native HEADLIGHTS c[%d] = %.4f %.4f %.4f %.4f", ci - 96, g_state.vsc[ci][0],
+                         g_state.vsc[ci][1], g_state.vsc[ci][2], g_state.vsc[ci][3]);
+                }
             }
         }
         break;
@@ -1877,6 +1888,20 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                     const uint32_t* p = &g_state.vs->program[idx * 4];
                     LOGR("d3d: flare vs ins[%zu] = %08X %08X %08X %08X", idx, p[0], p[1], p[2], p[3]);
                 }
+            }
+            if (prim == 7 && count == 4 && stride == 32) {
+                uint32_t u[8];
+                float f[8];
+                std::memcpy(u, vertices, 32);
+                std::memcpy(f, vertices, 32);
+                LOGR("d3d: flare prim7 v0 hex %08X %08X %08X %08X %08X %08X %08X %08X", u[0], u[1], u[2], u[3], u[4], u[5],
+                     u[6], u[7]);
+                LOGR("d3d: flare prim7 v0 flt %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f", f[0], f[1], f[2], f[3], f[4], f[5],
+                     f[6], f[7]);
+                LOGR("d3d: flare own_const=%d c[-38]=(%.2f,%.2f,%.2f,%.2f) c[-37]=(%.2f,%.2f,%.2f,%.2f)",
+                     int(g_own_constants), g_state.vsc[58][0], g_state.vsc[58][1], g_state.vsc[58][2],
+                     g_state.vsc[58][3], g_state.vsc[59][0], g_state.vsc[59][1], g_state.vsc[59][2],
+                     g_state.vsc[59][3]);
             }
         }
         if (prim == 7 && count == 4 && stride == 32) {

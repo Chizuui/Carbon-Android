@@ -1503,14 +1503,9 @@ struct HeadlightStage1BoostScope {
         if (!hl_tex) return;
         if (g_state.textures[1] != hl_tex && g_state.textures[2] != hl_tex) return;
         uint32_t out1 = g_state.simple[(gpu::kMPsRgbOutputs + 4) >> 2];
-        uint32_t rgb1 = g_state.simple[(gpu::kMPsRgbInputs + 4) >> 2];
         if (out1 == 0x00004D00u) {
             saved_out1 = out1;
-            g_state.simple[(gpu::kMPsRgbOutputs + 4) >> 2] = 0x00024D00u;  // *4 on r1 (headlight only)
-            active = true;
-        } else if (out1 == 0x00004C00u && rgb1 == 0x08040C08u) {
-            saved_out1 = out1;
-            g_state.simple[(gpu::kMPsRgbOutputs + 4) >> 2] = 0x00014C00u;  // *2 on road shader (x2 at stage 2 = 4x)
+            g_state.simple[(gpu::kMPsRgbOutputs + 4) >> 2] = 0x00014D00u;  // *2 on r1 (headlight only)
             active = true;
         }
     }
@@ -1845,8 +1840,7 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                  stride);
         }
     }
-    // the flare pass (sub_0010EC90) draws its quads and trails here; log what it actually draws, so the next
-    // clamp targets the real pattern instead of the bloom copies
+    // the flare pass (sub_0010EC90) draws its quads and trails here; log state for the first 12 draws
     if (game::g_flare_pass) {
         if (prim == 7 && count == 4 && stride == 32) {
             for (int r = 0; r < 4; r++)
@@ -1856,9 +1850,22 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
         static int flare_pass_dumps = 0;
         if (flare_pass_dumps < 12) {
             flare_pass_dumps++;
-            LOGR("d3d: flare pass draw prim %u count %u stride %u vs %08X vp %ux%u", prim, count, stride,
-                 g_state.vs_handle, g_state.viewport.w, g_state.viewport.h);
-            if ((prim == 7 && count == 4 && stride == 32) || (prim == 5 && count == 3 && stride == 24)) {
+            LOGR("d3d: flare pass draw prim %u count %u stride %u vs %08X vp %ux%u z_en=%u bcol=%08X tex0=%08X rt=%08X",
+                 prim, count, stride, g_state.vs_handle, g_state.viewport.w, g_state.viewport.h,
+                 g_state.rs[gpu::kRsZEnable], g_state.simple[gpu::kMBlendColor >> 2],
+                 g_state.textures[0], g_state.rt.data);
+            if (prim == 7 && count == 4 && stride == 32) {
+                const uint8_t* b = static_cast<const uint8_t*>(vertices);
+                for (uint32_t i = 0; i < count; i++) {
+                    float f[3];
+                    uint32_t col = 0;
+                    float uv[2];
+                    std::memcpy(f, b + i * stride, 12);
+                    std::memcpy(&col, b + i * stride + 12, 4);
+                    std::memcpy(uv, b + i * stride + 16, 8);
+                    LOGR("d3d: flare v%u %.2f %.2f %.2f col=%08X uv=%.3f,%.3f", i, f[0], f[1], f[2], col, uv[0], uv[1]);
+                }
+            } else if (prim == 5 && count == 3 && stride == 24) {
                 const uint8_t* b = static_cast<const uint8_t*>(vertices);
                 for (uint32_t i = 0; i < count; i++) {
                     float f[3];
@@ -1918,34 +1925,6 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                     LOGR("d3d: flare quad clamped %.0fx%.0f to %.0fx%.0f", w, h, w * scale, h * scale);
                 }
             }
-        }
-    }
-    // the fans and trails come out as static on Vulkan, so skip them outright while the flare pass runs; the
-    // fullscreen composite quad is skipped below for the same reason
-    if (game::g_flare_pass && ((prim == 7 && count == 4 && stride == 32) || (prim == 5 && count == 3 && stride == 24))) {
-        return;
-    }
-    // the flare pass ends with a fullscreen composite quad (one 640x480, or two 640x240 halves in the loop
-    // path): a textured overlay over the whole frame. Carbon's real headlight glow is the fan billboard,
-    // skipped above because it comes out as static on Vulkan, so with nothing underneath the composite only
-    // washes the screen white. Skip it outright while the flare pass runs. There is no small prim-8 core
-    // glow in Carbon to enlarge (the earlier 3x enlargement targeted a glow that does not exist), so that
-    // code is gone; a fullscreen quad here is the composite, not a glow
-    if (game::g_flare_pass && prim == 8 && count == 4 && stride == 28) {
-        const uint8_t* b = static_cast<const uint8_t*>(draw_vertices);
-        float v[4][7];
-        for (int i = 0; i < 4; i++) std::memcpy(v[i], b + i * stride, 28);
-        float vw = float(g_state.viewport.w), vh = float(g_state.viewport.h);
-        float minx = v[0][0], maxx = v[0][0], miny = v[0][1], maxy = v[0][1];
-        for (int i = 1; i < 4; i++) {
-            minx = std::min(minx, v[i][0]);
-            maxx = std::max(maxx, v[i][0]);
-            miny = std::min(miny, v[i][1]);
-            maxy = std::max(maxy, v[i][1]);
-        }
-        float w = maxx - minx, h = maxy - miny;
-        if (vw > 0 && vh > 0 && w >= vw * 0.9f && h >= vh * 0.4f) {
-            return;
         }
     }
     // the flare streaks (triangle list, stride 24) are the other half of the pass; log the first few that span

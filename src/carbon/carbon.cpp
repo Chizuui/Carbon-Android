@@ -507,11 +507,10 @@ X86_FUNC(sub_00108690) {
 }
 
 // Light Flares in Carbon: sub_0010EC90 ("eRenderLightFlares" pass, cdecl/0-arg, plain ret).
-// Off unless light_flares or headlights is on: the pass supplies the view-projection constants used to
-// synthesize the headlight road pool, and d3d8.cpp skips the glitchy fans/trails/composite.
+// Gated strictly on light_flares.
 X86_EXTERN_FUNC(__imp__sub_0010EC90);
 X86_FUNC(sub_0010EC90) {
-    if (game::Opt().light_flares || game::Opt().headlights) {
+    if (game::Opt().light_flares) {
         game::g_flare_pass = true;
         __imp__sub_0010EC90(ctx, base);
         game::g_flare_pass = false;

@@ -1490,29 +1490,26 @@ HLE_STDCALL(D3DDevice_SetPixelShaderConstant, 3) {
 
 // drawing
 
-struct NativeHeadlightBoostScope {
-    bool active = false;
-    uint32_t saved_out0 = 0;
-
-    NativeHeadlightBoostScope() {
-        if (!game::Opt().headlights || !game::Racing() || !g_state.ps) return;
-        auto valid_ptr = [](uint32_t p) { return p >= 0x10000u && (p & 0x7FFFFFFFu) < 0x08000000u; };
-        uint32_t hl_info = R32(0x0045D328u);
-        uint32_t hl_obj = valid_ptr(hl_info) ? R32(hl_info) : 0;
-        uint32_t hl_tex = valid_ptr(hl_obj) ? (hl_obj + 0x14u) : 0;
-        if (!hl_tex) return;
-        if (g_state.textures[1] != hl_tex && g_state.textures[2] != hl_tex) return;
-        uint32_t out0 = g_state.simple[gpu::kMPsRgbOutputs >> 2];
-        if ((out0 & 0x38000u) != 0x10000u) return;  // only boost SCALE_BY_TWO (*2) -> SCALE_BY_FOUR (*4)
-        saved_out0 = out0;
-        g_state.simple[gpu::kMPsRgbOutputs >> 2] = (out0 & ~0x38000u) | 0x20000u;
-        active = true;
+void LogHeadlightProjOnce() {
+    static bool logged = false;
+    if (logged || !game::Racing() || !g_state.ps) return;
+    auto valid_ptr = [](uint32_t p) { return p >= 0x10000u && (p & 0x7FFFFFFFu) < 0x08000000u; };
+    uint32_t hl_info = R32(0x0045D328u);
+    uint32_t hl_obj = valid_ptr(hl_info) ? R32(hl_info) : 0;
+    uint32_t hl_tex = valid_ptr(hl_obj) ? (hl_obj + 0x14u) : 0;
+    if (!hl_tex) return;
+    int st = (g_state.textures[1] == hl_tex) ? 1 : (g_state.textures[2] == hl_tex) ? 2 : -1;
+    if (st < 0) return;
+    logged = true;
+    uint32_t texmodes = g_state.rs[gpu::kRsPsTextureModes];
+    uint32_t rgb2 = g_state.simple[(gpu::kMPsRgbInputs + 8) >> 2];
+    uint32_t out2 = g_state.simple[(gpu::kMPsRgbOutputs + 8) >> 2];
+    LOGR("d3d: hl_proj st=%d texmodes=%08X rgb2=%08X out2=%08X", st, texmodes, rgb2, out2);
+    for (int ci : {166, 167, 168, 169, 170, 172}) {
+        LOGR("d3d: hl_proj c[%d] = %.4f %.4f %.4f %.4f", ci - 96, g_state.vsc[ci][0], g_state.vsc[ci][1],
+             g_state.vsc[ci][2], g_state.vsc[ci][3]);
     }
-
-    ~NativeHeadlightBoostScope() {
-        if (active) g_state.simple[gpu::kMPsRgbOutputs >> 2] = saved_out0;
-    }
-};
+}
 
 HLE_STDCALL(D3DDevice_DrawVertices, 3) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
@@ -1540,7 +1537,6 @@ HLE_STDCALL(D3DDevice_DrawVertices, 3) {
                      g_state.vsc[c][3]);
         }
     }
-    NativeHeadlightBoostScope hl_boost;
     if (g_backend) g_backend->Draw(g_state, a[0], a[1], a[2], nullptr);
     return 0;
 }
@@ -1548,9 +1544,9 @@ HLE_STDCALL(D3DDevice_DrawVertices, 3) {
 HLE_STDCALL(D3DDevice_DrawIndexedVertices, 3) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     SyncDeferred();
+    LogHeadlightProjOnce();
     const uint8_t* indices = a[2] ? static_cast<const uint8_t*>(HostPtr(a[2])) : nullptr;
     CountTarget(false, a[1]);
-    NativeHeadlightBoostScope hl_boost;
     if (g_backend) g_backend->Draw(g_state, a[0], 0, a[1], indices);
     return 0;
 }

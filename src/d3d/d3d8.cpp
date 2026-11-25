@@ -1258,18 +1258,24 @@ HLE_STDCALL(D3DDevice_SetVertexShader, 1) {
 }
 
 HLE_FASTCALL(D3DDevice_SetVertexShaderConstant1Fast, 0) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    Walk(Dev(kDevPush));
     uint32_t reg = a[0];
     if (reg < kVsConstants) std::memcpy(g_state.vsc[reg].data(), HostPtr(a[1]), 16);
     return 0;
 }
 
 HLE_FASTCALL(D3DDevice_SetVertexShaderConstant1, 0) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    Walk(Dev(kDevPush));
     uint32_t reg = a[0];
     if (reg < kVsConstants) std::memcpy(g_state.vsc[reg].data(), HostPtr(a[1]), 16);
     return 0;
 }
 
 HLE_FASTCALL(D3DDevice_SetVertexShaderConstant4, 0) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    Walk(Dev(kDevPush));
     uint32_t reg = a[0];
     uint32_t src = a[1];
     for (uint32_t i = 0; i < 4 && reg + i < kVsConstants; i++) {
@@ -1279,6 +1285,8 @@ HLE_FASTCALL(D3DDevice_SetVertexShaderConstant4, 0) {
 }
 
 HLE_FASTCALL(D3DDevice_SetVertexShaderConstantNotInlineFast, 1) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    Walk(Dev(kDevPush));
     uint32_t reg = a[0];
     uint32_t src = a[1];
     uint32_t dwords = a[2];
@@ -1958,7 +1966,7 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
     if (game::g_flare_pass && prim == 5 && count == 3 && stride == 24) {
         uint32_t bcol = g_state.simple[gpu::kMBlendColor >> 2];
         static int prim5_zero_logs = 0, prim5_move_logs = 0;
-        if ((bcol == 0 && prim5_zero_logs++ < 1) || (bcol != 0 && prim5_move_logs++ < 2)) {
+        if ((bcol == 0 && prim5_zero_logs++ < 1) || (bcol != 0 && prim5_move_logs++ < 1)) {
             LOGR("d3d: prim5 diag bcol=%08X blend=%u(%X,%X,%X) at=%u(%X,%u) cw=%08X cull=%X sc=%u vp=%u,%u %ux%u",
                  bcol, g_state.simple[gpu::kMBlendEnable >> 2], g_state.simple[gpu::kMSrcBlend >> 2],
                  g_state.simple[gpu::kMDestBlend >> 2], g_state.simple[gpu::kMBlendOp >> 2],
@@ -1975,9 +1983,6 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                  g_state.vsc[160][0], g_state.vsc[160][1], g_state.vsc[160][2], g_state.vsc[160][3],
                  g_state.vsc[161][0], g_state.vsc[161][1], g_state.vsc[161][2], g_state.vsc[161][3]);
         }
-        if (g_backend) g_backend->Clear(g_state, 0, nullptr, gpu::kClearTarget, 0x00000000u, 1.0f, 0);
-        g_state.streams[0] = stream;
-        return;
     }
     g_state.streams[0] = {UpVertices(draw_vertices, count * stride), stride};
     CountTarget(false, count);

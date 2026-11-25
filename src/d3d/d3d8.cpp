@@ -1490,59 +1490,9 @@ HLE_STDCALL(D3DDevice_SetPixelShaderConstant, 3) {
 
 // drawing
 
-void LogNativeHeadlightDraw(const char* kind, uint32_t prim, uint32_t count) {
-    if (!game::Racing()) return;
-    auto valid_ptr = [](uint32_t p) { return p >= 0x10000u && (p & 0x7FFFFFFFu) < 0x08000000u; };
-    uint32_t hl_info = R32(0x0045D328u);
-    uint32_t hl_obj = valid_ptr(hl_info) ? R32(hl_info) : 0;
-    uint32_t hl_tex = valid_ptr(hl_obj) ? (hl_obj + 0x14u) : 0;
-    static bool logged_hl_addr = false;
-    if (!logged_hl_addr) {
-        logged_hl_addr = true;
-        uint32_t data = hl_tex ? R32(hl_tex + kResData) : 0;
-        uint32_t fmt = hl_tex ? R32(hl_tex + kContainerFormat) : 0;
-        uint32_t sz = hl_tex ? R32(hl_tex + kContainerSize) : 0;
-        LOGR("d3d: native HEADLIGHTS addr info=%08X obj=%08X tex=%08X data=%08X fmt=%08X sz=%08X", hl_info, hl_obj,
-             hl_tex, data, fmt, sz);
-    }
-    if (!hl_tex) return;
-    for (int st = 0; st < 4; st++) {
-        if (g_state.textures[st] != hl_tex) continue;
-        static int hl_draws = 0;
-        if (hl_draws < 2) {
-            hl_draws++;
-            uint32_t tci = g_state.tss[st][gpu::kTssTexCoordIndex];
-            uint32_t ttf = g_state.tss[st][gpu::kTssTextureTransformFlags];
-            uint32_t cop = g_state.tss[st][gpu::kTssColorOp];
-            uint32_t c0 = g_state.simple[gpu::kMPsConstant0 >> 2];
-            uint32_t c1 = g_state.simple[(gpu::kMPsConstant0 + 4) >> 2];
-            LOGR("d3d: native HEADLIGHTS draw %s prim=%u count=%u stage=%d tex=%08X vs=%08X ps=%08X tci=%X ttf=%X cop=%u c0=%08X c1=%08X vs_insns=%zu",
-                 kind, prim, count, st, hl_tex, g_state.vs_handle, g_state.ps ? g_state.ps->handle : 0, tci, ttf, cop, c0, c1,
-                 g_state.vs ? g_state.vs->program.size() / 4 : 0);
-            uint32_t comb = g_state.simple[gpu::kMPsCombinerCount >> 2];
-            uint32_t rgb0 = g_state.simple[gpu::kMPsRgbInputs >> 2];
-            uint32_t rgb1 = g_state.simple[(gpu::kMPsRgbInputs + 4) >> 2];
-            uint32_t out0 = g_state.simple[gpu::kMPsRgbOutputs >> 2];
-            uint32_t out1 = g_state.simple[(gpu::kMPsRgbOutputs + 4) >> 2];
-            uint32_t fabcd = g_state.simple[gpu::kMPsFinalAbcd >> 2];
-            uint32_t fefgh = g_state.simple[gpu::kMPsFinalEfgh >> 2];
-            LOGR("d3d: native HEADLIGHTS comb=%08X rgb=(%08X,%08X) out=(%08X,%08X) final=(%08X,%08X)",
-                 comb, rgb0, rgb1, out0, out1, fabcd, fefgh);
-            if (hl_draws == 1) {
-                for (int ci : {58, 59, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107}) {
-                    LOGR("d3d: native HEADLIGHTS c[%d] = %.4f %.4f %.4f %.4f", ci - 96, g_state.vsc[ci][0],
-                         g_state.vsc[ci][1], g_state.vsc[ci][2], g_state.vsc[ci][3]);
-                }
-            }
-        }
-        break;
-    }
-}
-
 HLE_STDCALL(D3DDevice_DrawVertices, 3) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     SyncDeferred();
-    LogNativeHeadlightDraw("V", a[0], a[2]);
     CountTarget(false, a[2]);
     if (g_trace && (g_state.vs_handle & 1) && g_state.vs && g_state.streams[0].vb && a[2] <= 8) {
         static int dumps = 0;
@@ -1573,7 +1523,6 @@ HLE_STDCALL(D3DDevice_DrawVertices, 3) {
 HLE_STDCALL(D3DDevice_DrawIndexedVertices, 3) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     SyncDeferred();
-    LogNativeHeadlightDraw("IV", a[0], a[1]);
     const uint8_t* indices = a[2] ? static_cast<const uint8_t*>(HostPtr(a[2])) : nullptr;
     CountTarget(false, a[1]);
     if (g_backend) g_backend->Draw(g_state, a[0], 0, a[1], indices);
@@ -1867,43 +1816,6 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
     // the flare pass (sub_0010EC90) draws its quads and trails here; log what it actually draws, so the next
     // clamp targets the real pattern instead of the bloom copies
     if (game::g_flare_pass) {
-        static std::set<uint64_t> flare_vs_logged;
-        uint64_t fkey = (uint64_t(prim) << 32) | (uint64_t(count) << 16) | stride;
-        if (flare_vs_logged.size() < 6 && flare_vs_logged.insert(fkey).second) {
-            LOGR("d3d: flare vs dump prim=%u count=%u stride=%u rt=%08X zs=%08X tex0=%08X blend=%u(%X,%X,%X) vs=%08X ps=%08X",
-                 prim, count, stride, g_state.rt.data, g_state.zs.data, g_state.textures[0],
-                 g_state.simple[gpu::kMBlendEnable >> 2], g_state.simple[gpu::kMSrcBlend >> 2],
-                 g_state.simple[gpu::kMDestBlend >> 2], g_state.simple[gpu::kMBlendOp >> 2],
-                 g_state.vs_handle, g_state.ps ? g_state.ps->handle : 0);
-            if (g_state.vs) {
-                std::string in;
-                for (int r = 0; r < 16; r++) {
-                    if (g_state.vs->inputs[r].stream >= 0) {
-                        char buf[48];
-                        std::snprintf(buf, sizeof(buf), " r%d@%u:%u:s%d", r, g_state.vs->inputs[r].offset,
-                                      g_state.vs->inputs[r].type, g_state.vs->inputs[r].stream);
-                        in += buf;
-                    }
-                }
-                size_t insns = g_state.vs->program.size() / 4;
-                LOGR("d3d: flare vs inputs%s stride0=%u insns=%zu type=%X", in.c_str(),
-                     g_state.vs->stream_stride[0], insns, g_state.vs->program_type);
-            }
-            if (prim == 7 && count == 4 && stride == 32) {
-                uint32_t u[8];
-                float f[8];
-                std::memcpy(u, vertices, 32);
-                std::memcpy(f, vertices, 32);
-                LOGR("d3d: flare prim7 v0 hex %08X %08X %08X %08X %08X %08X %08X %08X", u[0], u[1], u[2], u[3], u[4], u[5],
-                     u[6], u[7]);
-                LOGR("d3d: flare prim7 v0 flt %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f", f[0], f[1], f[2], f[3], f[4], f[5],
-                     f[6], f[7]);
-                LOGR("d3d: flare own_const=%d c[-38]=(%.2f,%.2f,%.2f,%.2f) c[-37]=(%.2f,%.2f,%.2f,%.2f)",
-                     int(g_own_constants), g_state.vsc[58][0], g_state.vsc[58][1], g_state.vsc[58][2],
-                     g_state.vsc[58][3], g_state.vsc[59][0], g_state.vsc[59][1], g_state.vsc[59][2],
-                     g_state.vsc[59][3]);
-            }
-        }
         if (prim == 7 && count == 4 && stride == 32) {
             for (int r = 0; r < 4; r++)
                 for (int c = 0; c < 4; c++) g_pool_vp[r * 4 + c] = g_state.vsc[96 + r][c];

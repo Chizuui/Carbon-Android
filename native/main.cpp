@@ -370,7 +370,8 @@ void LogSystem() {
     std::time_t now = std::time(nullptr);
     char date[32] = {};
     std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
-    LOGR("%ls (%s), %s, build %s", kGame.title, IMAGE_XBE, date, BUILD_COMMIT);
+    LOGR("%ls (%s), %s, build %s (%s) v%s built %s",
+         kGame.title, IMAGE_XBE, date, BUILD_COMMIT, BUILD_BRANCH, BUILD_VERSION, BUILD_TIME);
     LOGR("Path: %s", ExeDir().c_str());
     LOGR("Device: %s %s, Android %s (API %d)", Property("ro.product.manufacturer").c_str(),
          Property("ro.product.model").c_str(), Property("ro.build.version.release").c_str(), SDL_GetAndroidSDKVersion());

@@ -43,17 +43,22 @@ foreach(i RANGE ${last})
 endforeach()
 file(SHA1 ${XBE} xbe_sha1)
 file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/image_sha1.cpp CONTENT "extern const char kImageSha1[] = \"${xbe_sha1}\";\n")
-# the build's version for the log: the commit when the project is in git, else unknown
-set(BUILD_COMMIT "unknown")
-find_package(Git QUIET)
-if(GIT_EXECUTABLE)
-    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD WORKING_DIRECTORY ${REPO}
-                    OUTPUT_VARIABLE head OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE failed)
-    if(NOT failed AND head)
-        set(BUILD_COMMIT ${head})
-    endif()
-endif()
-file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/build_info.h CONTENT "#define BUILD_COMMIT \"${BUILD_COMMIT}\"\n")
+# the build's version for the log: refreshed on every build so incremental builds never stay on a stale commit
+set(BUILD_INFO_HEADER ${CMAKE_CURRENT_BINARY_DIR}/build_info.h)
+set(BUILD_VERSION_FILE ${REPO}/app/build/build_version.txt)
+execute_process(COMMAND ${CMAKE_COMMAND}
+                -DREPO=${REPO}
+                -DOUT=${BUILD_INFO_HEADER}
+                -DVER_FILE=${BUILD_VERSION_FILE}
+                -P ${REPO}/cmake/gen_build_info.cmake)
+add_custom_target(update_build_info ALL
+                  COMMAND ${CMAKE_COMMAND}
+                          -DREPO=${REPO}
+                          -DOUT=${BUILD_INFO_HEADER}
+                          -DVER_FILE=${BUILD_VERSION_FILE}
+                          -P ${REPO}/cmake/gen_build_info.cmake
+                  BYPRODUCTS ${BUILD_INFO_HEADER}
+                  COMMENT "Updating build_info.h")
 
 # dependencies: SDL3 from the checkout Gradle makes (its Java side goes into the APK), the rest fetched
 set(SDL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL)
@@ -99,6 +104,7 @@ set(IMGUI_SOURCES ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.c
 
 add_library(main SHARED ${RUNTIME_SOURCES} ${GAME_HOST_SOURCES} ${ANDROID_SOURCES} ${GEN_SOURCES} ${IMGUI_SOURCES}
             ${volk_SOURCE_DIR}/volk.c ${CMAKE_CURRENT_BINARY_DIR}/image_sha1.cpp)
+add_dependencies(main update_build_info)
 # compat/ for the SDK's x86 header, the SDK harness's for the Winsock and DXGI names its portable runtime uses
 target_include_directories(main PRIVATE ${NATIVE}/compat ${SDK}/harness/compat ${NATIVE} ${GAME} ${SDK}/runtime ${GEN}
                            ${CMAKE_CURRENT_BINARY_DIR} ${glslang_SOURCE_DIR} ${volk_SOURCE_DIR}

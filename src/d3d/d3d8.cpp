@@ -366,6 +366,8 @@ void FreeSurface(uint32_t hdr, bool titles = false) {
 // Carbon never trades their memory before a Swap (its present path calls D3DDevice_Swap directly) — so the host
 // copies only follow the title's current data pointers (SyncTitleBuffers) and the title's headers are never
 // written here.
+uint32_t g_last_title_data[3] = {};
+
 void CopyTitleBuffers(const PresentParams& p) {
     for (uint32_t i = 0; i < g_buffer_count; i++) {
         // the library's list is back buffers then the front; here the front is first
@@ -386,6 +388,7 @@ void CopyTitleBuffers(const PresentParams& p) {
 
 void CreateBuffers(const PresentParams& p) {
     g_present = p;
+    g_last_title_data[0] = g_last_title_data[1] = g_last_title_data[2] = 0;
     uint32_t color_fmt = gpu::LinearColorFormat(p.format);
     g_buffer_count = std::min<uint32_t>(p.count + 1, 3);
     bool titles = true;
@@ -786,26 +789,32 @@ uint64_t g_synced_swaps = 0, g_rotated_swaps = 0;
 // treatment samples the buffer being drawn instead of the finished one and the scene goes black every other frame,
 // the directly drawn UI steady on top. copy the title's current data pointers into the host copies, in the same
 // mapping as CopyTitleBuffers; true when any of them moved, so the caller rotates only when the title did not
-bool SyncTitleBuffers() {
-    if (g_buffer_count < 2) return false;
+enum class TitleSync { kUnavailable, kStatic, kMoved };
+
+TitleSync SyncTitleBuffers() {
+    if (g_buffer_count < 2) return TitleSync::kUnavailable;
     for (uint32_t i = 0; i < g_buffer_count; i++)
-        if (!g_buffers_titles[i]) return false;
+        if (!g_buffers_titles[i]) return TitleSync::kUnavailable;
     uint32_t data[3] = {}, lock[3] = {};
     for (uint32_t i = 0; i < g_buffer_count; i++) {
         uint32_t src = g_present.surfaces[i == 0 ? g_buffer_count - 1 : i - 1];
-        if (!src || !mem::IsCommitted(src + 11)) return false;
+        if (!src || !mem::IsCommitted(src + 11)) return TitleSync::kUnavailable;
         uint32_t d = R32(src + kResData);
-        if (!d) return false;
+        if (!d) return TitleSync::kUnavailable;
         data[i] = d;
         lock[i] = R32(src + kResLock);
     }
-    bool changed = false;
+    bool title_moved = false;
+    if (g_last_title_data[0] != 0) {
+        for (uint32_t i = 0; i < g_buffer_count; i++)
+            if (data[i] != g_last_title_data[i]) title_moved = true;
+    }
     for (uint32_t i = 0; i < g_buffer_count; i++) {
-        if (R32(g_buffers[i] + kResData) != data[i]) changed = true;
+        g_last_title_data[i] = data[i];
         W32(g_buffers[i] + kResData, data[i]);
         W32(g_buffers[i] + kResLock, lock[i]);
     }
-    return changed;
+    return title_moved ? TitleSync::kMoved : TitleSync::kStatic;
 }
 
 // perf diagnostic: once a second, where the frames' time went, per frame. The title's own time is what is left of its
@@ -911,11 +920,22 @@ HLE_STDCALL(D3DDevice_Swap, 1) {
                 uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(PerfClock::now() - paced).count()));
     // follow the title's own buffer headers when it traded them, else rotate the host copies as before: a title
     // that trades and a host that also rotates read different buffers on alternate frames
-    if (SyncTitleBuffers())
-        g_synced_swaps++;
-    else {
-        RotateBuffers();
-        g_rotated_swaps++;
+    switch (SyncTitleBuffers()) {
+        case TitleSync::kStatic:
+            // Title kept its buffer headers fixed (e.g. Carbon FeGarageMain): keep host copies aligned
+            // with title headers instead of rotating onto the other buffer and desyncing bloom/post-fx.
+            g_synced_swaps++;
+            break;
+        case TitleSync::kMoved:
+            // Title traded its buffer headers itself (e.g. racing): advance host copies one step to stay
+            // in lockstep with the title's next-frame buffer swap.
+            RotateBuffers();
+            g_rotated_swaps++;
+            break;
+        case TitleSync::kUnavailable:
+            RotateBuffers();
+            g_rotated_swaps++;
+            break;
     }
     if (g_presents % 120 == 0) {
         uint32_t title_data[3] = {}, host_data[3] = {};

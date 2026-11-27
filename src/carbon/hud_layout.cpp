@@ -51,6 +51,7 @@ constexpr Piece kPieces[] = {
     {0x2CBBF14A, kHudRaceInfo},     // TOUGE_ZONE_GROUP
     {0x82308C63, kHudRaceInfo},     // PURSUITBOARD
     {0xABA3B16F, kHudRaceInfo},     // CANYON_METER_GROUP
+    {0x9F569138, kHudWingman},      // WINGMAN_PIP_CONTROL (Crew / Wingman bar, child of 0x1603009E)
     {0x7FAC287B, kHudTrax},         // EA Trax's banner, in the race's package and in the front end's
 };
 
@@ -75,28 +76,42 @@ void SetFloat(uint32_t va, float f) {
     kernel::W32(va, b);
 }
 
-void Move(uint32_t data, HudItem item, std::unordered_map<uint32_t, Moved>& seen) {
+void Move(uint32_t data, float dx, float dy, std::unordered_map<uint32_t, Moved>& seen) {
     if (!data || !mem::IsCommitted(data) || !mem::IsCommitted(data + kDataY + 3)) return;
     float x = Float(data + kDataX), y = Float(data + kDataY);
     Moved m{x, y, x, y};
     if (auto it = g_moved.find(data); it != g_moved.end() && it->second.set_x == x && it->second.set_y == y) m = it->second;
-    m.set_x = m.x + g_hud_x[item].load();
-    m.set_y = m.y + g_hud_y[item].load();
+    m.set_x = m.x + dx;
+    m.set_y = m.y + dy;
     if (m.set_x != x) SetFloat(data + kDataX, m.set_x);
     if (m.set_y != y) SetFloat(data + kDataY, m.set_y);
     seen[data] = m;
 }
 
-void Walk(uint32_t first, int count, int& budget, std::unordered_map<uint32_t, Moved>& seen) {
+void Walk(uint32_t first, int count, int& budget, std::unordered_map<uint32_t, Moved>& seen,
+          float parent_dx = 0.0f, float parent_dy = 0.0f) {
     for (uint32_t o = first; o && budget-- > 0 && count != 0; o = Peek(o + kObjectNext), count--) {
         uint32_t hash = Peek(o + kObjectHash);
-        bool piece = false;
-        for (const Piece& p : kPieces)
+        bool stop = false;
+        float child_dx = parent_dx, child_dy = parent_dy;
+        for (const Piece& p : kPieces) {
             if (p.hash == hash) {
-                Move(Peek(o + kObjectData), p.item, seen);
-                piece = true;
+                float target_dx = g_hud_x[p.item].load();
+                float target_dy = g_hud_y[p.item].load();
+                Move(Peek(o + kObjectData), target_dx - parent_dx, target_dy - parent_dy, seen);
+                // 0x1603009E parents WINGMAN_PIP_CONTROL (0x9F569138), so keep walking its children
+                // with the minimap offset so Crew Bar can cancel it out and move independently.
+                if (hash == 0x1603009Eu) {
+                    child_dx = target_dx;
+                    child_dy = target_dy;
+                } else {
+                    stop = true;
+                }
+                break;
             }
-        if (!piece && Peek(o + kObjectType) == kTypeGroup) Walk(Peek(o + kGroupObjects), int(Peek(o + kGroupCount)), budget, seen);
+        }
+        if (!stop && Peek(o + kObjectType) == kTypeGroup)
+            Walk(Peek(o + kGroupObjects), int(Peek(o + kGroupCount)), budget, seen, child_dx, child_dy);
     }
 }
 

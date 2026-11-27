@@ -561,8 +561,8 @@ int g_selected = -1;
 
 // The HUD's speedometer, minimap, race information and EA Trax banner, moved in the editor too (src/game/hud_layout.cpp moves them): their offsets from
 // where the game puts them, FEng units (480 to the frame's height), in layout.toml's [hud]
-constexpr const char* kHudIds[game::kHudItems] = {"speedometer", "minimap", "race_info", "ea_trax"};
-constexpr const char* kHudLabels[game::kHudItems] = {"SPEEDOMETER", "MINIMAP", "RACE INFO", "EA TRAX"};
+constexpr const char* kHudIds[game::kHudItems] = {"speedometer", "minimap", "race_info", "wingman", "ea_trax"};
+constexpr const char* kHudLabels[game::kHudItems] = {"SPEEDOMETER", "MINIMAP", "RACE INFO", "CREW BAR", "EA TRAX"};
 struct HudPlace {
     float x = 0, y = 0;
 };
@@ -1828,7 +1828,7 @@ void DrawEditorBar(ImDrawList* dl, float th) {
     }
     // the picked control's name under the bar, else the hint
     std::string hint = "DRAG TO MOVE, PINCH OR - + TO RESIZE";
-    if (g_hud_selected >= 0) hint = std::string(kHudLabels[g_hud_selected]) + " - " + hint;
+    if (g_hud_selected >= 0) hint = std::string(kHudLabels[g_hud_selected]) + " - DRAG TO MOVE";
     else if (g_selected >= 0) {
         const char* name = IsStick(size_t(g_selected))
                                ? (size_t(g_selected) == kRStick ? "RIGHT STICK" : "LEFT STICK")

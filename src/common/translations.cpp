@@ -101,6 +101,7 @@ constexpr Entry kEntries[] = {
     {"ZOOM IN", {u"Zoom avant", u"Vergrößern", u"Ingrandisci", u"Acercar", u"Perbesar"}},
     {"ZOOM OUT", {u"Zoom arrière", u"Verkleinern", u"Riduci", u"Alejar", u"Perkecil"}},
     {"RACE INFO", {u"Infos de course", u"Renninfo", u"Info gara", u"Info de carrera", u"Info balapan"}},
+    {"CREW BAR", {{}, {}, {}, {}, u"Bar kru"}},
     {"EDIT CONTROLS POSITION", {{}, {}, {}, {}, u"Ubah posisi kontrol"}},
     {"STEERING", {{}, {}, {}, {}, u"Kemudi"}},
     {"ARROWS", {{}, {}, {}, {}, u"Panah"}},

@@ -252,7 +252,7 @@ const char* kVsPrologue = R"(
     // precise: EQUAL depth passes need bit exact positions
     precise float4 R0 = 0, R1 = 0, R2 = 0, R3 = 0, R4 = 0, R5 = 0, R6 = 0, R7 = 0, R8 = 0, R9 = 0, R10 = 0, R11 = 0;
     precise float4 oPos = 0;
-    float4 oD0 = float4(0, 0, 0, 1), oD1 = 0, oB0 = float4(0, 0, 0, 1), oB1 = 0, oFog = 0, oPts = 1;
+    float4 oD0 = float4(0, 0, 0, 1), oD1 = float4(0, 0, 0, 1), oB0 = float4(0, 0, 0, 1), oB1 = float4(0, 0, 0, 1), oFog = 0, oPts = 1;
     float4 oT0 = float4(0, 0, 0, 1), oT1 = float4(0, 0, 0, 1), oT2 = float4(0, 0, 0, 1), oT3 = float4(0, 0, 0, 1);
 )";
 

@@ -1518,36 +1518,6 @@ HLE_STDCALL(D3DDevice_SetPixelShaderConstant, 3) {
 
 // drawing
 
-struct HeadlightStage1BoostScope {
-    bool active = false;
-    uint32_t saved_out1 = 0;
-
-    HeadlightStage1BoostScope() {
-        if (!game::Opt().headlights || !game::Racing() || !g_state.ps) return;
-        auto valid_ptr = [](uint32_t p) { return p >= 0x10000u && (p & 0x7FFFFFFFu) < 0x08000000u; };
-        uint32_t hl_info = R32(0x0045D328u);
-        uint32_t hl_obj = valid_ptr(hl_info) ? R32(hl_info) : 0;
-        uint32_t hl_tex = valid_ptr(hl_obj) ? (hl_obj + 0x14u) : 0;
-        if (!hl_tex) return;
-        if (g_state.textures[1] != hl_tex && g_state.textures[2] != hl_tex) return;
-        uint32_t out1 = g_state.simple[(gpu::kMPsRgbOutputs + 4) >> 2];
-        uint32_t rgb1 = g_state.simple[(gpu::kMPsRgbInputs + 4) >> 2];
-        if (out1 == 0x00004D00u) {
-            saved_out1 = out1;
-            g_state.simple[(gpu::kMPsRgbOutputs + 4) >> 2] = 0x00014D00u;  // *2 on r1 (headlight only)
-            active = true;
-        } else if (out1 == 0x00004C00u && rgb1 == 0x08040C08u) {
-            saved_out1 = out1;
-            g_state.simple[(gpu::kMPsRgbOutputs + 4) >> 2] = 0x00014C00u;  // *2 on road-asphalt HEADLIGHTS shader
-            active = true;
-        }
-    }
-
-    ~HeadlightStage1BoostScope() {
-        if (active) g_state.simple[(gpu::kMPsRgbOutputs + 4) >> 2] = saved_out1;
-    }
-};
-
 HLE_STDCALL(D3DDevice_DrawVertices, 3) {
     std::lock_guard<std::recursive_mutex> lock(g_lock);
     SyncDeferred();
@@ -1574,7 +1544,6 @@ HLE_STDCALL(D3DDevice_DrawVertices, 3) {
                      g_state.vsc[c][3]);
         }
     }
-    HeadlightStage1BoostScope hl_boost;
     if (g_backend) g_backend->Draw(g_state, a[0], a[1], a[2], nullptr);
     return 0;
 }
@@ -1584,7 +1553,6 @@ HLE_STDCALL(D3DDevice_DrawIndexedVertices, 3) {
     SyncDeferred();
     const uint8_t* indices = a[2] ? static_cast<const uint8_t*>(HostPtr(a[2])) : nullptr;
     CountTarget(false, a[1]);
-    HeadlightStage1BoostScope hl_boost;
     if (g_backend) g_backend->Draw(g_state, a[0], 0, a[1], indices);
     return 0;
 }

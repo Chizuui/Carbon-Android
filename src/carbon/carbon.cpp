@@ -163,10 +163,19 @@ void ApplyCheats() {
         else if (held) kernel::G<uint8_t>(mgr + kNoNewCops) = 0;
         held = o.cheat_no_police;
     }
-    // One-shot / latch: write 1 while ON, and never reset back to 0 when turned OFF so unlocks stay active
-    // for the rest of the session (and bought cars stay in the career save).
-    if (o.cheat_unlock_all && mem::IsCommitted(kUnlockAll)) {
-        kernel::G<uint8_t>(kUnlockAll) = 1;
+    // Restore the previous unlock byte when turned OFF so the user can toggle it back off cleanly;
+    // cars already bought while ON stay registered in the career save.
+    static bool unlock_held = false;
+    static uint8_t unlock_saved = 0;
+    if (mem::IsCommitted(kUnlockAll)) {
+        if (o.cheat_unlock_all) {
+            if (!unlock_held) unlock_saved = kernel::G<uint8_t>(kUnlockAll);
+            unlock_held = true;
+            kernel::G<uint8_t>(kUnlockAll) = 1;
+        } else if (unlock_held) {
+            kernel::G<uint8_t>(kUnlockAll) = unlock_saved;
+            unlock_held = false;
+        }
     }
 }
 

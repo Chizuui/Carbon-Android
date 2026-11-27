@@ -434,7 +434,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kGyroSensitivity, kTouchOpacity, kTouchSize, kTouchEdit, kCheckUpdates, kAspectRatio, kScreenFilter,
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
-             kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice,
+             kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll, kCheatFreezeAi,
              kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kHeadlights, kShaderPreload, kBrightness, kLowEndPreset,
              kMidPreset, kHighPreset, kExportLog, kDiscord, kOverlayLayout, kGpuDriver, kResetGpuDriver };
 
@@ -505,6 +505,8 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kCheatSpeedbreaker, "INFINITE SPEEDBREAKER"},
     {Kind::Value, kCheatCash, "MAX CASH"},
     {Kind::Value, kCheatNoPolice, "NO POLICE"},
+    {Kind::Value, kCheatUnlockAll, "UNLOCK ALL"},
+    {Kind::Value, kCheatFreezeAi, "FREEZE OPPONENTS"},
 };
 
 // the credits' names, an info row's id; as they are, untranslated
@@ -572,6 +574,8 @@ bool* ToggleFlag(Settings& s, int id) {
         case kCheatSpeedbreaker: return &o.cheat_speedbreaker;
         case kCheatCash: return &o.cheat_cash;
         case kCheatNoPolice: return &o.cheat_no_police;
+        case kCheatUnlockAll: return &o.cheat_unlock_all;
+        case kCheatFreezeAi: return &o.cheat_freeze_ai;
         case kSkipMovies: return &o.skip_movies;
         default: return nullptr;
     }
@@ -702,10 +706,17 @@ void StepInputRow(int id, int step, char (&text)[64]) {
     }
 }
 
+bool g_unlock_all_warn_open = false;  // requests the UNLOCK ALL confirmation modal on the next frame
+
 // steps the value first when step is not zero
 std::string RowText(int id, int step, Settings& s = Get()) {
     char text[64] = "";
     if (bool* on = ToggleFlag(s, id)) {
+        if (id == kCheatUnlockAll && step != 0 && &s == &Get() && !*on) {
+            g_unlock_all_warn_open = true;
+            std::snprintf(text, sizeof(text), "%s", OnOff(*on));
+            return text;
+        }
         Flip(*on, step);
         std::snprintf(text, sizeof(text), "%s", OnOff(*on));
     } else if (!StepDisplayRow(id, step, s, text) && !StepGraphicsRow(id, step, s, text)) {
@@ -742,6 +753,8 @@ void RestoreDefaults(int page) {
         o.cheat_speedbreaker = none.cheat_speedbreaker;
         o.cheat_cash = none.cheat_cash;
         o.cheat_no_police = none.cheat_no_police;
+        o.cheat_unlock_all = none.cheat_unlock_all;
+        o.cheat_freeze_ai = none.cheat_freeze_ai;
         Changed();
         return;
     }
@@ -1295,6 +1308,36 @@ void DrawPanel() {
         ImGui::EndChild();
         ImGui::EndChild();
         DrawFooter(em);
+        if (g_unlock_all_warn_open) {
+            ImGui::OpenPopup("##unlock_all_warn");
+            g_unlock_all_warn_open = false;
+        }
+        ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(std::min(panel_w * 0.85f, em * 34.0f), 0.0f), ImGuiCond_Always);
+        if (ImGui::BeginPopupModal("##unlock_all_warn", nullptr,
+                                   ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
+            ImGui::TextUnformatted(Ui("WARNING").c_str());
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, em * 0.3f));
+            ImGui::TextWrapped(
+                "%s", Ui("Do not activate UNLOCK ALL before unlocking Free Roam mode, or career progression may break.")
+                          .c_str());
+            ImGui::Dummy(ImVec2(0, em * 0.6f));
+            float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            if (ImGui::Button(Ui("CANCEL").c_str(), ImVec2(bw, 0))) ImGui::CloseCurrentPopup();
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Button, kGold);
+            ImGui::PushStyleColor(ImGuiCol_Text, kDarkText);
+            if (ImGui::Button(Ui("ACTIVATE").c_str(), ImVec2(bw, 0))) {
+                game::Opt().cheat_unlock_all = true;
+                Changed();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::PopStyleColor(2);
+            ImGui::EndPopup();
+        }
     }
     ImGui::End();
     ImGui::PopStyleVar(6);
@@ -1474,6 +1517,7 @@ void ToggleMenu() {
     g_capture = -1;
     g_pad_capture = -1;
     if (open) input::ReleaseCursor();
+    else g_unlock_all_warn_open = false;
 }
 
 // the frame rate's colour: green at 55 and up, yellow from 30, red below

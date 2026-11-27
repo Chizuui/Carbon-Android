@@ -129,6 +129,7 @@ void ApplyGraphicsSwitches() {
 // 0x46D944 holds AICopManager / ICopMgr singleton pointer
 constexpr uint32_t kCopManager = 0x46D944;
 constexpr uint32_t kNoNewCops = 0x5C;
+constexpr uint32_t kUnlockAll = 0x46D784;
 constexpr uint32_t kCareerRoot = 0x46A7CC, kCashField = 0x24310;
 
 // Carbon's speedbreaker meter (update 0x23F150, amount [this + 0x7C], 0..1) skips its drain when this debug
@@ -161,6 +162,11 @@ void ApplyCheats() {
         if (o.cheat_no_police) kernel::G<uint8_t>(mgr + kNoNewCops) = 1;
         else if (held) kernel::G<uint8_t>(mgr + kNoNewCops) = 0;
         held = o.cheat_no_police;
+    }
+    // One-shot / latch: write 1 while ON, and never reset back to 0 when turned OFF so unlocks stay active
+    // for the rest of the session (and bought cars stay in the career save).
+    if (o.cheat_unlock_all && mem::IsCommitted(kUnlockAll)) {
+        kernel::G<uint8_t>(kUnlockAll) = 1;
     }
 }
 
@@ -1091,6 +1097,66 @@ X86_FUNC(sub_000C1B30) {
         }
     }
     __imp__sub_000C1B30(ctx, base);
+}
+
+namespace {
+
+constexpr uint32_t kAIVehicleRacecarVtbl = 0x003A5F88u;
+constexpr uint32_t kIaiWingmanId = 0x00012C10u;
+
+// Mirrors SimableIsWingman (0x1AD240 + 0x17DD20) without touching guest registers/stack.
+bool IsWingmanSimable(uint32_t simable) {
+    if (!game::IsCommittedRange(simable, 8u)) return false;
+    uint32_t com_obj = kernel::R32(simable + 4u);
+    if (!game::IsCommittedRange(com_obj, 8u)) return false;
+    uint32_t begin = kernel::R32(com_obj);
+    uint32_t end = kernel::R32(com_obj + 4u);
+    if (begin < 0x10000u || end <= begin) return false;
+    uint32_t size = end - begin;
+    if (size > 0x400u || (size & 7u) != 0 || !game::IsCommittedRange(begin, size)) return false;
+    for (uint32_t p = begin; p < end; p += 8u) {
+        if (kernel::R32(p) == kIaiWingmanId && kernel::R32(p + 4u) != 0) return true;
+    }
+    return false;
+}
+
+bool IsFrozenOpponentAi(uint32_t ai_vehicle) {
+    return game::Opt().cheat_freeze_ai && game::IsCommittedRange(ai_vehicle, 0x2F0u) &&
+           kernel::R32(ai_vehicle) == kAIVehicleRacecarVtbl &&
+           !IsWingmanSimable(kernel::R32(ai_vehicle + 0x2Cu));
+}
+
+}  // namespace
+
+// Freeze opponent AI racecars by zeroing throttle/steering and applying full brake/handbrake
+// after AIVehicle::UpdateThrottle (0x31CA0). Excludes player and wingman.
+X86_EXTERN_FUNC(__imp__sub_00031CA0);
+X86_FUNC(sub_00031CA0) {
+    uint32_t self = ctx.ecx;
+    __imp__sub_00031CA0(ctx, base);
+    if (IsFrozenOpponentAi(self)) {
+        constexpr uint32_t kOneFloat = 0x3F800000u;
+        kernel::W32(self + 0x138u, 0u);         // steer
+        kernel::W32(self + 0x21Cu, 0u);         // steer (applied)
+        kernel::W32(self + 0x13Cu, 0u);         // gas
+        kernel::W32(self + 0x220u, 0u);         // gas (applied)
+        kernel::W32(self + 0x140u, kOneFloat);  // brake
+        kernel::W32(self + 0x224u, kOneFloat);  // brake (applied)
+        kernel::W32(self + 0x144u, kOneFloat);  // handbrake
+        kernel::W32(self + 0x228u, kOneFloat);  // handbrake (applied)
+        kernel::W32(self + 0x240u, 0u);         // throttle target
+    }
+}
+
+// Skip GluePID::Update (0x32E50) for frozen opponent AI so rubberbanding forces don't push them.
+X86_EXTERN_FUNC(__imp__sub_00032E50);
+X86_FUNC(sub_00032E50) {
+    if (game::Opt().cheat_freeze_ai && game::IsCommittedRange(ctx.ecx, 0x14u) &&
+        !IsWingmanSimable(kernel::R32(ctx.ecx + 0x0Cu))) {
+        ctx.esp += 8;  // ret 0x04
+        return;
+    }
+    __imp__sub_00032E50(ctx, base);
 }
 
 namespace game {

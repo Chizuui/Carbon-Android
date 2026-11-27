@@ -19,6 +19,10 @@ uint32_t HostThunk(X86Func* fn);
 #include "common/hud_layout.h"
 #include "common/options.h"
 
+namespace d3d {
+void ClearBackbufferAlpha();
+}
+
 namespace game {
 
 // Carbon's widescreen:
@@ -566,6 +570,18 @@ X86_FUNC(sub_0010CC40) {
 X86_EXTERN_FUNC(__imp__sub_0010CE30);
 X86_FUNC(sub_0010CE30) {
     ctx.esp += 4;
+}
+
+// Screen-space quad helper in Carbon: sub_00106420(arg0, arg1, arg2, arg3) (cdecl, plain ret).
+// When called with (0, 1, 0, 0) (e.g. from sub_001116C0 at 0x11190C right before FEng), it is
+// meant to clear backbuffer alpha to 0; enforce a clean alpha-only clear so minimap roads never bleed.
+X86_EXTERN_FUNC(__imp__sub_00106420);
+X86_FUNC(sub_00106420) {
+    bool is_alpha_clear = game::IsCommittedRange(ctx.esp + 4, 16) &&
+                          kernel::R32(ctx.esp + 4) == 0 && kernel::R32(ctx.esp + 8) == 1 &&
+                          kernel::R32(ctx.esp + 12) == 0 && kernel::R32(ctx.esp + 16) == 0;
+    __imp__sub_00106420(ctx, base);
+    if (is_alpha_clear) d3d::ClearBackbufferAlpha();
 }
 
 // FEng SwitchPackage hook in Carbon: sub_0012FCD0
@@ -1221,6 +1237,10 @@ X86_FUNC(sub_000175B0) {
         return;
     }
     __imp__sub_000175B0(ctx, base);
+}
+
+namespace d3d {
+void ClearBackbufferAlpha();
 }
 
 namespace game {

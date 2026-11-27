@@ -2230,6 +2230,94 @@ void Walk(uint32_t end) {
     g_walk = end;
 }
 }  // namespace
+
+// Clears the active render target's alpha channel to 0.0 across its full extent before FEng/minimap rendering,
+// preventing stale 3D bloom/scene alpha from leaking TRACK_MAP roads outside the radar circle.
+void ClearBackbufferAlpha() {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    if (!g_backend || !g_state.rt.data) return;
+    SyncDeferred();
+    static int logged = 0;
+    if (logged++ < 3) {
+        LOGR("d3d: ClearBackbufferAlpha rt=%08X vp=%u,%u %ux%u sc=%u cw=%08X at=%u(%X,%u) sten=%u blend=%u(%X,%X) ps=%08X",
+             g_state.rt.data, g_state.viewport.x, g_state.viewport.y, g_state.viewport.w, g_state.viewport.h,
+             g_state.scissor_count, g_state.simple[gpu::kMColorWriteEnable >> 2],
+             g_state.simple[gpu::kMAlphaTestEnable >> 2], g_state.simple[gpu::kMAlphaFunc >> 2],
+             g_state.simple[gpu::kMAlphaRef >> 2], g_state.rs[gpu::kRsStencilEnable],
+             g_state.simple[gpu::kMBlendEnable >> 2], g_state.simple[gpu::kMSrcBlend >> 2],
+             g_state.simple[gpu::kMDestBlend >> 2], g_state.ps ? g_state.ps->handle : 0);
+    }
+    uint32_t w = 0, h = 0;
+    gpu::SurfaceSize(g_state.rt, w, h);
+    if (!w || !h) return;
+
+    struct AlphaVert {
+        float x, y, z, rhw;
+        uint32_t color;
+    };
+    const float fw = float(w), fh = float(h);
+    const AlphaVert verts[6] = {
+        {0.0f, 0.0f, 0.0f, 1.0f, 0x00000000u},
+        {fw,   0.0f, 0.0f, 1.0f, 0x00000000u},
+        {fw,   fh,   0.0f, 1.0f, 0x00000000u},
+        {0.0f, 0.0f, 0.0f, 1.0f, 0x00000000u},
+        {fw,   fh,   0.0f, 1.0f, 0x00000000u},
+        {0.0f, fh,   0.0f, 1.0f, 0x00000000u},
+    };
+
+    auto saved_vs_handle = g_state.vs_handle;
+    auto saved_vs = g_state.vs;
+    auto saved_ps = g_state.ps;
+    uint32_t saved_tex0 = g_state.textures[0];
+    uint32_t saved_tss0 = g_state.tss[0][gpu::kTssColorOp];
+    uint32_t saved_cull = g_state.rs[gpu::kRsCullMode];
+    uint32_t saved_zen = g_state.rs[gpu::kRsZEnable];
+    uint32_t saved_sten = g_state.rs[gpu::kRsStencilEnable];
+    uint32_t saved_fog = g_state.rs[gpu::kRsFogEnable];
+    uint32_t saved_atest = g_state.simple[gpu::kMAlphaTestEnable >> 2];
+    uint32_t saved_cwrite = g_state.simple[gpu::kMColorWriteEnable >> 2];
+    uint32_t saved_blend = g_state.simple[gpu::kMBlendEnable >> 2];
+    uint32_t saved_zw = g_state.simple[gpu::kMZWriteEnable >> 2];
+    auto saved_vp = g_state.viewport;
+    uint32_t saved_sc = g_state.scissor_count;
+    auto saved_stream = g_state.streams[0];
+
+    g_state.vs_handle = 0x044;  // D3DFVF_XYZRHW | D3DFVF_DIFFUSE
+    g_state.vs = nullptr;
+    g_state.ps = nullptr;
+    g_state.textures[0] = 0;
+    g_state.tss[0][gpu::kTssColorOp] = 1;  // D3DTOP_DISABLE
+    g_state.rs[gpu::kRsCullMode] = 0;
+    g_state.rs[gpu::kRsZEnable] = 0;
+    g_state.rs[gpu::kRsStencilEnable] = 0;
+    g_state.rs[gpu::kRsFogEnable] = 0;
+    g_state.simple[gpu::kMAlphaTestEnable >> 2] = 0;
+    g_state.simple[gpu::kMColorWriteEnable >> 2] = 0x01000000u;  // ALPHA ONLY
+    g_state.simple[gpu::kMBlendEnable >> 2] = 0;
+    g_state.simple[gpu::kMZWriteEnable >> 2] = 0;
+    g_state.viewport = {0, 0, w, h, 0.0f, 1.0f};
+    g_state.scissor_count = 0;
+    g_state.streams[0] = {UpVertices(verts, sizeof(verts)), 20};
+    CountTarget(false, 6);
+    g_backend->Draw(g_state, 5, 0, 6, nullptr);
+
+    g_state.streams[0] = saved_stream;
+    g_state.scissor_count = saved_sc;
+    g_state.viewport = saved_vp;
+    g_state.simple[gpu::kMZWriteEnable >> 2] = saved_zw;
+    g_state.simple[gpu::kMBlendEnable >> 2] = saved_blend;
+    g_state.simple[gpu::kMColorWriteEnable >> 2] = saved_cwrite;
+    g_state.simple[gpu::kMAlphaTestEnable >> 2] = saved_atest;
+    g_state.rs[gpu::kRsFogEnable] = saved_fog;
+    g_state.rs[gpu::kRsStencilEnable] = saved_sten;
+    g_state.rs[gpu::kRsZEnable] = saved_zen;
+    g_state.rs[gpu::kRsCullMode] = saved_cull;
+    g_state.tss[0][gpu::kTssColorOp] = saved_tss0;
+    g_state.textures[0] = saved_tex0;
+    g_state.ps = saved_ps;
+    g_state.vs = saved_vs;
+    g_state.vs_handle = saved_vs_handle;
+}
 }  // namespace d3d
 
 // (register, x, y, z, w), register -1 the position

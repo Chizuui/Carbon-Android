@@ -1531,9 +1531,14 @@ struct HeadlightStage1BoostScope {
         if (!hl_tex) return;
         if (g_state.textures[1] != hl_tex && g_state.textures[2] != hl_tex) return;
         uint32_t out1 = g_state.simple[(gpu::kMPsRgbOutputs + 4) >> 2];
+        uint32_t rgb1 = g_state.simple[(gpu::kMPsRgbInputs + 4) >> 2];
         if (out1 == 0x00004D00u) {
             saved_out1 = out1;
             g_state.simple[(gpu::kMPsRgbOutputs + 4) >> 2] = 0x00014D00u;  // *2 on r1 (headlight only)
+            active = true;
+        } else if (out1 == 0x00004C00u && rgb1 == 0x08040C08u) {
+            saved_out1 = out1;
+            g_state.simple[(gpu::kMPsRgbOutputs + 4) >> 2] = 0x00014C00u;  // *2 on road-asphalt HEADLIGHTS shader
             active = true;
         }
     }

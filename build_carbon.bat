@@ -81,6 +81,8 @@ for /f %%i in ('powershell -NoProfile -Command "Get-Date -AsUTC -Format yyyyMMdd
 for /f %%i in ('powershell -NoProfile -Command "Get-Date -AsUTC -Format yyyy.MM.dd.HH"') do set "VNAME=%%i"
 set "GRADLE_ARGS=%GRADLE_ARGS% -PversionCode=%VCODE% -PversionName=%VNAME%"
 :haveversion
+echo %GRADLE_ARGS% | findstr /C:"-Ppgo=" >nul
+if errorlevel 1 if exist pgo\carbon.profdata set "GRADLE_ARGS=%GRADLE_ARGS% -Ppgo=use -PpgoProfile=pgo/carbon.profdata"
 call gradlew.bat assembleRelease -Pgame=carbon -PxbeGenerated="%GEN_DIR%" -PxbeImage=assets/%GAME_XBE% -PxbeConfig=%GAME_TOML% -PxbeGameDir=carbon -PappId=com.racas.carbon %GRADLE_ARGS% || goto :fail
 
 echo.

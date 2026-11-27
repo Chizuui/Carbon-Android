@@ -549,6 +549,25 @@ X86_FUNC(sub_0010C5F0) {
     ctx.esp += 4;
 }
 
+// FE Blur (Pause Blur) in Carbon: sub_0010CC40 (cdecl, 1 byte arg [esp+4], plain ret).
+// Clamping pass counter [0x00468EF0] to 0 before enable=1 forces the game's built-in 1-pass path
+// (backbuffer -> backbuffer, skipping the 3-pass feedback loop and spreadtap downsample).
+X86_EXTERN_FUNC(__imp__sub_0010CC40);
+X86_FUNC(sub_0010CC40) {
+    if (mem::IsCommitted(ctx.esp + 4) && kernel::G<uint8_t>(ctx.esp + 4) == 1 &&
+        mem::IsCommitted(0x00468EF0u)) {
+        kernel::W32(0x00468EF0u, 0u);
+    }
+    __imp__sub_0010CC40(ctx, base);
+}
+
+// Depth of field in Carbon: sub_0010CE30 (cdecl, 0 args, plain ret).
+// Skips the 4-pass DoF blur + full-screen composite that drops FPS in in-engine cutscenes.
+X86_EXTERN_FUNC(__imp__sub_0010CE30);
+X86_FUNC(sub_0010CE30) {
+    ctx.esp += 4;
+}
+
 // FEng SwitchPackage hook in Carbon: sub_0012FCD0
 X86_EXTERN_FUNC(__imp__sub_0012FCD0);
 X86_FUNC(sub_0012FCD0) {
@@ -1167,6 +1186,7 @@ X86_FUNC(sub_00031CA0) {
     }
     if (IsFrozenOpponentAi(self)) {
         constexpr uint32_t kOneFloat = 0x3F800000u;
+        kernel::W32(self + 0xB4u, 0u);         // mTargetSpeed
         kernel::W32(self + 0x138u, 0u);         // steer
         kernel::W32(self + 0x21Cu, 0u);         // steer (applied)
         kernel::W32(self + 0x13Cu, 0u);         // gas
@@ -1190,6 +1210,17 @@ X86_FUNC(sub_00032E50) {
         return;
     }
     __imp__sub_00032E50(ctx, base);
+}
+
+// Force ShouldUseSimplePhysics (0x175B0) to return false for frozen opponent AI so distant opponents stay on full physics + brakes.
+X86_EXTERN_FUNC(__imp__sub_000175B0);
+X86_FUNC(sub_000175B0) {
+    if (IsFrozenOpponentAi(ctx.ecx)) {
+        ctx.eax &= ~0xFFu;  // al = 0
+        ctx.esp += 4;       // __thiscall, 0 stack args
+        return;
+    }
+    __imp__sub_000175B0(ctx, base);
 }
 
 namespace game {

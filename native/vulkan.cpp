@@ -611,6 +611,7 @@ struct DrawTextures {
     float wide[4] = {};
     bool blur[4] = {};
     bool small = false;  // a stage reads a target smaller than the frame
+    VkImageView feedback_view = VK_NULL_HANDLE;
 };
 
 struct DrawShaders {
@@ -3171,8 +3172,10 @@ VkImageView VulkanBackend::BindTargetTexture(const State& s, int stage, const Te
     }
     stages.fmt[stage] = t.img.fmt;
     if (feedback) {
+        if (stages.feedback_view) return stages.feedback_view;
         Image* fb = Feedback(t);
-        return fb ? fb->view : VK_NULL_HANDLE;
+        stages.feedback_view = fb ? fb->view : VK_NULL_HANDLE;
+        return stages.feedback_view;
     }
     if (t.depth) info.shadow = ShadowDepthKind(d.format);
     Transition(t.img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);

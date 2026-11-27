@@ -27,6 +27,11 @@ uint32_t SurfaceEpoch();
 void WaitForeground();
 // the window's size in pixels
 void WindowPixels(int& w, int& h);
+// custom Vulkan driver picker & AdrenoTools paths (native/update.cpp)
+void PickCustomDriver();
+void ResetCustomDriver();
+const char* NativeLibDir();
+const char* DriverTempDir();
 
 }  // namespace host
 

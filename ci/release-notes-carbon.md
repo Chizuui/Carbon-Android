@@ -42,10 +42,10 @@
 
 | | |
 | --- | --- |
-| 🖥️ **Graphics** | Render resolution 20–200%, LOW / MID / HIGH presets, brightness 50–200%, bloom, motion blur, light flares, road reflections, shadows, FXAA / SSAA 2x, sharpen, vivid, scanline and CRT filters, unlocked frame rate, V-Sync, FPS counter with latency (GOverlay style, vertical or horizontal), anisotropic filtering |
+| 🖥️ **Graphics** | Render resolution 20–200%, LOW / MID / HIGH presets, brightness 50–200%, bloom, motion blur, light flares, road reflections, shadows, FXAA / SSAA 2x, sharpen, vivid, scanline and CRT filters, unlocked frame rate, V-Sync, FPS counter with latency (GOverlay style, vertical or horizontal), anisotropic filtering, custom GPU drivers (Turnip / AdrenoTools with auto-fallback) |
 | 👆 **Touch Controls** | A full Xbox pad on screen, a layout editor to move and resize each control, stick mode and tilt steering |
 | 🎮 **Other Input** | SDL3 controllers with rumble and rebindable controls (with a live input test), stick deadzone, keyboard with rebindable controls |
-| ⚙️ **General** | Language (with Indonesian), audio output, update check, export log, pause while in the background |
+| ⚙️ **General** | Language (with Indonesian), audio output, update check, zip log export (with share sheet), pause while in the background, AI difficulty (`DEFAULT`–`EXTREME`), cheats (`UNLOCK ALL`, `FREEZE OPPONENTS`, `NO POLICE`, `UNLIMITED NOS`, `UNLIMITED SPEEDBREAKER`, `MAX CASH`) |
 
 The settings panel opens from the gear at the top of the screen. Android's back button is the controller's Start.
 

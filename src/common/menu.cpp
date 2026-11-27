@@ -17,6 +17,10 @@
 #include <vector>
 
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_system.h>
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
 #include <imgui.h>
 #include <imgui_internal.h>  // ClearActiveID, the drag scroll's
 
@@ -53,6 +57,8 @@ void EditLayout();
 // native/update.cpp: the activity asks GitHub for a newer release and says what it found
 namespace host {
 void CheckForUpdates();
+void PickCustomDriver();
+void ResetCustomDriver();
 // native/stats.cpp: the performance overlay's numbers, percent and degrees, -1 where the device does not tell
 void SamplePerf();
 float CpuLoad();
@@ -69,6 +75,38 @@ Settings DefaultSettings();  // native/main.cpp: a phone's first run, unlimited 
 namespace {
 
 std::atomic<bool> g_open{false};
+
+#ifdef __ANDROID__
+// Open the Android share sheet for the exported log file(s), so the player can send the log
+// straight to Discord, Telegram, ... The Java side (MostWantedActivity.shareLogFiles) zips the
+// current and previous logs into one file and shares the zip through an ACTION_SEND intent.
+// SDL_GetAndroidJNIEnv attaches this thread to the JVM when needed, and SDL_GetAndroidActivity
+// returns the activity (MostWantedActivity). A missing method or a null env/activity just means
+// no share sheet; the Download copies are the fallback.
+void ShareLogFiles(const std::string& current, const std::string& prev) {
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+    jobject activity = static_cast<jobject>(SDL_GetAndroidActivity());
+    if (!env || !activity) return;
+    jclass cls = env->GetObjectClass(activity);
+    if (!cls) {
+        env->DeleteLocalRef(activity);
+        return;
+    }
+    jmethodID mid = env->GetMethodID(cls, "shareLogFiles", "(Ljava/lang/String;Ljava/lang/String;)V");
+    if (mid) {
+        jstring jcur = env->NewStringUTF(current.c_str());
+        jstring jprev = env->NewStringUTF(prev.c_str());
+        env->CallVoidMethod(activity, mid, jcur, jprev);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        if (jcur) env->DeleteLocalRef(jcur);
+        if (jprev) env->DeleteLocalRef(jprev);
+    }
+    env->DeleteLocalRef(cls);
+    env->DeleteLocalRef(activity);
+}
+#else
+void ShareLogFiles(const std::string&, const std::string&) {}
+#endif
 
 // EXPORT LOG: the current run's log, copied where the player can send it. The log already lives in the shared
 // logs folder, but a tester has to know which of its files is this run's; the export is one clearly named copy
@@ -121,22 +159,33 @@ void ExportLog() {
         return dst;
     };
     std::filesystem::path dst = copy(src, std::string(kGame.log) + "-log");
-    if (dst.empty()) {
-        g_export_log_status = "FAILED";
-        LOGE("export log: cannot copy %s", src.string().c_str());
-        return;
-    }
-    g_export_log_status = "SAVED";
-    LOGR("export log: %s -> %s", src.string().c_str(), dst.string().c_str());
     std::string prev = logx::PrevPath();
+    std::filesystem::path pdst;
     if (!prev.empty()) {
-        std::filesystem::path pdst = copy(std::filesystem::path(prev), std::string(kGame.log) + "-prev-log");
+        pdst = copy(std::filesystem::path(prev), std::string(kGame.log) + "-prev-log");
         if (pdst.empty()) {
             LOGE("export log: cannot copy %s", prev.c_str());
         } else {
             LOGR("export log: %s -> %s", prev.c_str(), pdst.string().c_str());
         }
     }
+    // Share sheet: after the copy, offer the file(s) straight to Discord, Telegram, ...
+    // instead of making the tester dig the file out of Download. The copies above stay as
+    // the fallback when the share sheet cannot open (no app, FileProvider misconfigured).
+    // The share must NOT depend on the Download copy: on several phones the copy fails
+    // (scoped storage, no all-files access) and the row just read FAILED with no popup.
+    // Share the copies when they exist, otherwise the original logs straight from where
+    // they live — the app can always read those, and the FileProvider serves them.
+    std::string share_current = dst.empty() ? src.string() : dst.string();
+    std::string share_prev = pdst.empty() ? prev : pdst.string();
+    if (dst.empty()) {
+        g_export_log_status = "SHARED";
+        LOGR("export log: copy failed, sharing originals %s", src.string().c_str());
+    } else {
+        g_export_log_status = "SAVED";
+        LOGR("export log: %s -> %s", src.string().c_str(), dst.string().c_str());
+    }
+    ShareLogFiles(share_current, share_prev);
 }
 
 // near-black warm panel, gold on dark red kept from the old panel, red only for the active nav and selections
@@ -385,9 +434,9 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kGyroSensitivity, kTouchOpacity, kTouchSize, kTouchEdit, kCheckUpdates, kAspectRatio, kScreenFilter,
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
-             kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll,
-             kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kShaderPreload, kBrightness, kLowEndPreset,
-             kMidPreset, kHighPreset, kExportLog, kDiscord, kOverlayLayout };
+             kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll, kCheatFreezeAi, kAiDifficulty,
+             kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kHeadlights, kShaderPreload, kBrightness, kLowEndPreset,
+             kMidPreset, kHighPreset, kExportLog, kDiscord, kOverlayLayout, kGpuDriver, kResetGpuDriver };
 
 using rows::Kind;
 using rows::Row;
@@ -405,6 +454,8 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kVsync, "VERTICAL SYNC"},
     {Kind::Value, kMaxFps, "MAX FRAME RATE"},
     {Kind::Value, kShaderPreload, "SHADER PRELOADING"},
+    {Kind::Link, kGpuDriver, "CUSTOM GPU DRIVER"},
+    {Kind::Link, kResetGpuDriver, "RESET GPU DRIVER"},
     {Kind::Heading, -1, "OVERLAY PERFORMA"},
     {Kind::Value, kFpsCounter, "FPS COUNTER"},
     {Kind::Value, kOverlayLayout, "OVERLAY LAYOUT"},
@@ -424,6 +475,7 @@ constexpr Row kGraphicsRows[] = {
     {Kind::Value, kRainDrops, "SCREEN RAINDROPS"},
     {Kind::Value, kYellowTint, "YELLOW TINT"},
     {Kind::Value, kMotionBlur, "MOTION BLUR"},
+    {Kind::Value, kHeadlights, "HEADLIGHTS"},
     {Kind::Value, kLightFlares, "LIGHT FLARES"},
     {Kind::Value, kScreenFilter, "SCREEN FILTER"},
 };
@@ -454,6 +506,8 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kCheatCash, "MAX CASH"},
     {Kind::Value, kCheatNoPolice, "NO POLICE"},
     {Kind::Value, kCheatUnlockAll, "UNLOCK ALL"},
+    {Kind::Value, kCheatFreezeAi, "FREEZE OPPONENTS"},
+    {Kind::Value, kAiDifficulty, "AI DIFFICULTY"},
 };
 
 // the credits' names, an info row's id; as they are, untranslated
@@ -514,6 +568,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kRainDrops: return &o.rain_drops;
         case kYellowTint: return &o.yellow_tint;
         case kMotionBlur: return &o.motion_blur;
+        case kHeadlights: return &o.headlights;
         case kLightFlares: return &o.light_flares;
         case kShaderPreload: return &o.shader_preload;
         case kCheatNos: return &o.cheat_nos;
@@ -521,6 +576,7 @@ bool* ToggleFlag(Settings& s, int id) {
         case kCheatCash: return &o.cheat_cash;
         case kCheatNoPolice: return &o.cheat_no_police;
         case kCheatUnlockAll: return &o.cheat_unlock_all;
+        case kCheatFreezeAi: return &o.cheat_freeze_ai;
         case kSkipMovies: return &o.skip_movies;
         default: return nullptr;
     }
@@ -599,10 +655,16 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
     }
 }
 
+constexpr uint32_t kAiDifficulties[] = {0, 1, 2, 3, 4};
+const char* const kAiDifficultyNames[] = {"DEFAULT", "VERY EASY", "EASY", "HARD", "EXTREME"};
+
 // the general and touch rows that are no ON / OFF, stepped first
 void StepInputRow(int id, int step, char (&text)[64]) {
     game::Options& o = game::Opt();
     switch (id) {
+        case kAiDifficulty:
+            std::snprintf(text, sizeof(text), "%s", kAiDifficultyNames[StepTable(kAiDifficulties, o.ai_difficulty, step)]);
+            break;
         case kAudioOutput:
             std::snprintf(text, sizeof(text), "%s", kAudioOutputNames[StepTable(kAudioOutputs, o.audio_output, step)]);
             break;
@@ -651,10 +713,17 @@ void StepInputRow(int id, int step, char (&text)[64]) {
     }
 }
 
+bool g_unlock_all_warn_open = false;  // requests the UNLOCK ALL confirmation modal on the next frame
+
 // steps the value first when step is not zero
 std::string RowText(int id, int step, Settings& s = Get()) {
     char text[64] = "";
     if (bool* on = ToggleFlag(s, id)) {
+        if (id == kCheatUnlockAll && step != 0 && &s == &Get() && !*on) {
+            g_unlock_all_warn_open = true;
+            std::snprintf(text, sizeof(text), "%s", OnOff(*on));
+            return text;
+        }
         Flip(*on, step);
         std::snprintf(text, sizeof(text), "%s", OnOff(*on));
     } else if (!StepDisplayRow(id, step, s, text) && !StepGraphicsRow(id, step, s, text)) {
@@ -692,6 +761,8 @@ void RestoreDefaults(int page) {
         o.cheat_cash = none.cheat_cash;
         o.cheat_no_police = none.cheat_no_police;
         o.cheat_unlock_all = none.cheat_unlock_all;
+        o.cheat_freeze_ai = none.cheat_freeze_ai;
+        o.ai_difficulty = none.ai_difficulty;
         Changed();
         return;
     }
@@ -837,7 +908,11 @@ void LinkRow(const Row& r) {
     bool open = ImGui::Selectable("##link", false, ImGuiSelectableFlags_AllowOverlap, ImVec2(box.row_w, box.row_h));
     if (ImGui::IsItemFocused() || ImGui::IsItemHovered()) FillItem();
     RowLabel(box, r.label);
-    std::string value = r.id == kExportLog ? g_export_log_status : Ui("OPEN");
+    std::string value;
+    if (r.id == kExportLog) value = g_export_log_status;
+    else if (r.id == kGpuDriver) value = game::Opt().gpu_driver_name.empty() ? "SYSTEM" : game::Opt().gpu_driver_name;
+    else if (r.id == kResetGpuDriver) value = Ui("RESET");
+    else value = Ui("OPEN");
     float value_x = box.row_x + box.row_w - box.block_w + box.row_h + ImGui::GetStyle().ItemSpacing.x;
     float pad = (box.value_w - ImGui::CalcTextSize(value.c_str()).x) * 0.5f;
     ImGui::SetCursorPos(ImVec2(value_x + std::max(pad, 0.0f), box.row_y));
@@ -849,6 +924,8 @@ void LinkRow(const Row& r) {
     EndRow(box);
     if (!open) return;
     if (r.id == kExportLog) ExportLog();
+    else if (r.id == kGpuDriver) host::PickCustomDriver();
+    else if (r.id == kResetGpuDriver) host::ResetCustomDriver();
     else if (r.id == kTouchEdit) touch::EditLayout();
     else if (const char* url = LinkUrl(r.id)) SDL_OpenURL(url);
 }
@@ -1239,6 +1316,36 @@ void DrawPanel() {
         ImGui::EndChild();
         ImGui::EndChild();
         DrawFooter(em);
+        if (g_unlock_all_warn_open) {
+            ImGui::OpenPopup("##unlock_all_warn");
+            g_unlock_all_warn_open = false;
+        }
+        ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(std::min(panel_w * 0.85f, em * 34.0f), 0.0f), ImGuiCond_Always);
+        if (ImGui::BeginPopupModal("##unlock_all_warn", nullptr,
+                                   ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar)) {
+            ImGui::PushStyleColor(ImGuiCol_Text, kHeading);
+            ImGui::TextUnformatted(Ui("WARNING").c_str());
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0, em * 0.3f));
+            ImGui::TextWrapped(
+                "%s", Ui("Do not activate UNLOCK ALL before unlocking Free Roam mode, or career progression may break.")
+                          .c_str());
+            ImGui::Dummy(ImVec2(0, em * 0.6f));
+            float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+            if (ImGui::Button(Ui("CANCEL").c_str(), ImVec2(bw, 0))) ImGui::CloseCurrentPopup();
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Button, kGold);
+            ImGui::PushStyleColor(ImGuiCol_Text, kDarkText);
+            if (ImGui::Button(Ui("ACTIVATE").c_str(), ImVec2(bw, 0))) {
+                game::Opt().cheat_unlock_all = true;
+                Changed();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::PopStyleColor(2);
+            ImGui::EndPopup();
+        }
     }
     ImGui::End();
     ImGui::PopStyleVar(6);
@@ -1324,6 +1431,8 @@ std::string rows::Value(const Row& r, int step) {
             return Ui(RowText(r.id, step));
         case Kind::Link:
             if (r.id == kExportLog) return g_export_log_status;
+            if (r.id == kGpuDriver) return game::Opt().gpu_driver_name.empty() ? "SYSTEM" : game::Opt().gpu_driver_name;
+            if (r.id == kResetGpuDriver) return Ui("RESET");
             return Ui(r.id == kLowEndPreset || r.id == kMidPreset || r.id == kHighPreset ? "APPLY" : "OPEN");
         case Kind::Info:
             return r.id >= 0 && r.id < int(std::size(kCreditNames)) ? kCreditNames[r.id] : "";
@@ -1348,6 +1457,10 @@ void rows::Activate(const Row& r) {
     if (r.kind == Kind::Link) {
         if (r.id == kExportLog) {
             ExportLog();
+        } else if (r.id == kGpuDriver) {
+            host::PickCustomDriver();
+        } else if (r.id == kResetGpuDriver) {
+            host::ResetCustomDriver();
         } else if (r.id == kLowEndPreset) {
             ApplyPreset(0);
         } else if (r.id == kMidPreset) {
@@ -1412,6 +1525,7 @@ void ToggleMenu() {
     g_capture = -1;
     g_pad_capture = -1;
     if (open) input::ReleaseCursor();
+    else g_unlock_all_warn_open = false;
 }
 
 // the frame rate's colour: green at 55 and up, yellow from 30, red below

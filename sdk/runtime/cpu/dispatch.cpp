@@ -73,6 +73,19 @@ uint32_t KernelThunkAddress(uint32_t ordinal) { return kKernelThunkBase + ordina
 
 void x86_icall(X86Context& ctx, uint8_t* base, uint32_t target) {
     ctx.last_icall = target;
+    // A null function pointer (target 0) is a null virtual/indirect call — the same degenerate state
+    // the null page handles for derefs: a null object's vtable read returns 0, so the call target is
+    // 0 (tester log carbon-prev-c709e279.log: sub_0010F320, call [edx+0x04] at 0x10F36E with edx 0,
+    // after [0x46E264] was 0 because the career has no valid car). Return 0 instead of aborting:
+    // pop the return address (like the callee's ret) and set eax to 0, so the caller's own null
+    // checks can handle it. Only target 0 is swallowed — any other missing target is still a real
+    // config/recompile problem and keeps the trap below.
+    if (target == 0) {
+        LOG_FIRST(32, "icall: null function pointer, returning 0 (return address %08X)", kernel::R32(ctx.esp));
+        ctx.eax = 0;
+        ctx.esp += 4;  // pop the return address, like the callee's ret
+        return;
+    }
     if (target >= g_lo && target < g_hi && g_continuation[target - g_lo]) throw X86Resume{target, ctx.esp};
     if (X86Func* f = dispatch::Find(target)) {
         f(ctx, base);
@@ -95,6 +108,17 @@ void x86_icall(X86Context& ctx, uint8_t* base, uint32_t target) {
         }
     }
     uint32_t ret = kernel::R32(ctx.esp);
+    // List-cleanup destructor path (sub_0016E190, return address 0x16E1BA): the game patches
+    // vtable[0] (0x3B545C, FEngMemoryPool) at runtime to a per-type destructor, and several of
+    // those targets were never recompiled — 0x176F12, 0x176F51, 0x173768, 0x175538, ... — the
+    // vtable often points 1 byte into an instruction. Rather than whack-a-mole each new target,
+    // treat an unknown target on this cleanup path as a no-op destructor: log it and return 0.
+    if (ret == 0x16E1BA) {
+        LOG_FIRST(32, "icall: unknown destructor %08X on cleanup path (ret 0016E1BA), skipping", target);
+        ctx.eax = 0;
+        ctx.esp += 4;  // pop the return address, like the callee's ret
+        return;
+    }
     LOGE("indirect call to %08X has no recompiled function (return address %08X, esp %08X)", target, ret, ctx.esp);
     LOGE("add 0x%X to [functions] in the image's config/*.toml and rebuild", target);
     x86_trap(ctx, ret, "indirect call to unknown code");

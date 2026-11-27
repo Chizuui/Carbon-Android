@@ -370,7 +370,8 @@ void LogSystem() {
     std::time_t now = std::time(nullptr);
     char date[32] = {};
     std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
-    LOGR("%ls (%s), %s, build %s", kGame.title, IMAGE_XBE, date, BUILD_COMMIT);
+    LOGR("%ls (%s), %s, build %s (%s) v%s built %s",
+         kGame.title, IMAGE_XBE, date, BUILD_COMMIT, BUILD_BRANCH, BUILD_VERSION, BUILD_TIME);
     LOGR("Path: %s", ExeDir().c_str());
     LOGR("Device: %s %s, Android %s (API %d)", Property("ro.product.manufacturer").c_str(),
          Property("ro.product.model").c_str(), Property("ro.build.version.release").c_str(), SDL_GetAndroidSDKVersion());
@@ -470,15 +471,44 @@ std::filesystem::path LogDir() {
     return app::ExeDir() / "logs";
 }
 
+#ifdef XBE_PGO_GENERATE
+extern "C" {
+void __llvm_profile_set_filename(const char* name);
+int __llvm_profile_write_file(void);
+}
+static std::string g_pgo_path;
+static std::mutex g_pgo_lock;
+static void FlushPgoProfile(const char* reason) {
+    std::lock_guard lock(g_pgo_lock);
+    if (g_pgo_path.empty()) return;
+    int rc = __llvm_profile_write_file();
+    LOGR("pgo: wrote %s (rc=%d, reason=%s)", g_pgo_path.c_str(), rc, reason);
+    logx::Flush();
+}
+static bool SDLCALL PgoEventWatch(void*, SDL_Event* e) {
+    if (e->type == SDL_EVENT_WILL_ENTER_BACKGROUND || e->type == SDL_EVENT_DID_ENTER_BACKGROUND ||
+        e->type == SDL_EVENT_TERMINATING || e->type == SDL_EVENT_QUIT) {
+        FlushPgoProfile("lifecycle");
+    }
+    return true;
+}
+#endif
+
 void Dispatch(const SDL_Event& e) {
     switch (e.type) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_TERMINATING:
+#ifdef XBE_PGO_GENERATE
+            FlushPgoProfile("quit");
+#endif
             logx::Flush();
             kernel::Shutdown(0);
             break;
         case SDL_EVENT_WILL_ENTER_BACKGROUND:
             SetForeground(false);
+#ifdef XBE_PGO_GENERATE
+            FlushPgoProfile("background");
+#endif
             break;
         case SDL_EVENT_DID_ENTER_FOREGROUND:
             SetForeground(true);
@@ -520,6 +550,12 @@ int main(int, char**) {
     // a file named perf in the app's folder: the perf log lines, as XBE_PERF gives them on a PC
     if (std::error_code ec; std::filesystem::exists(app::ExeDir() / "perf", ec)) setenv("XBE_PERF", "1", 1);
     logx::Init(LogDir().string(), app::kGame.log);
+#ifdef XBE_PGO_GENERATE
+    g_pgo_path = (LogDir() / "carbon.profraw").string();
+    __llvm_profile_set_filename(g_pgo_path.c_str());
+    SDL_AddEventWatch(PgoEventWatch, nullptr);
+    LOGR("pgo: instrumented build, profile output -> %s", g_pgo_path.c_str());
+#endif
     InstallCrashHandlers(logx::Path());
     LOGR("app: log %s", logx::Path().c_str());
     if (!logx::PrevPath().empty()) LOGR("app: previous log %s", logx::PrevPath().c_str());
@@ -558,5 +594,13 @@ int main(int, char**) {
             while (SDL_PollEvent(&e)) Dispatch(e);
         }
         touch::Pump();
+#ifdef XBE_PGO_GENERATE
+        static uint64_t next_pgo_flush = 0;
+        uint64_t now_ms = SDL_GetTicks();
+        if (now_ms >= next_pgo_flush) {
+            next_pgo_flush = now_ms + 30000;
+            if (now_ms >= 30000) FlushPgoProfile("periodic");
+        }
+#endif
     }
 }

@@ -48,4 +48,11 @@
     <string name="game_imported">Game berhasil diimpor</string>
     <string name="game_imported_text">%1$s sudah siap. Game akan dimulai sebentar lagi.</string>
     <string name="import_failed">Impor gagal</string>
+
+    <!-- custom GPU driver -->
+    <string name="custom_driver_title">Driver GPU Custom</string>
+    <string name="custom_driver_installing">Memasang driver…</string>
+    <string name="custom_driver_installed">Driver %1$s terpasang.\n\nMulai ulang aplikasi untuk menggunakan driver baru.</string>
+    <string name="custom_driver_reset">Kembali ke driver GPU bawaan sistem.\n\nMulai ulang aplikasi untuk menerapkan.</string>
+    <string name="custom_driver_failed">Gagal memasang driver: %1$s</string>
 </resources>

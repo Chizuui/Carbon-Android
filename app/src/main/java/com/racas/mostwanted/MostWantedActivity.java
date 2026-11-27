@@ -73,6 +73,7 @@ public class MostWantedActivity extends SDLActivity {
     private static native void nativeLooseAxes(float lx, float ly, float rx, float ry, float lt, float rt, float hx,
                                                float hy);
     private static native void nativeLooseRelease();
+    private static native void nativeSetCustomDriver(String dir, String lib, String name);
 
     private static boolean loose(InputEvent e, int sources) {
         return !mBrokenLibraries && (e.getSource() & sources) != 0
@@ -229,6 +230,36 @@ public class MostWantedActivity extends SDLActivity {
         });
     }
 
+    public void pickCustomDriver() {
+        runOnUiThread(() -> {
+            if (!isFinishing()) DriverManager.pick(this);
+        });
+    }
+
+    public void resetCustomDriver() {
+        DriverManager.reset(this);
+        runOnUiThread(() -> {
+            if (isFinishing() || (dialog != null && dialog.isShowing())) return;
+            dialog = new AlertDialog.Builder(this)
+                    .setTitle(R.string.custom_driver_title)
+                    .setMessage(R.string.custom_driver_reset)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
+        });
+    }
+
+    public String nativeLibDir() {
+        String dir = getApplicationInfo().nativeLibraryDir;
+        return dir.endsWith("/") ? dir : (dir + "/");
+    }
+
+    public String driverTempDir() {
+        File d = new File(getCacheDir(), "adrenotools_tmp");
+        d.mkdirs();
+        String p = d.getAbsolutePath();
+        return p.endsWith("/") ? p : (p + "/");
+    }
+
     // OPEN DONATION LINK from the options menu, from the game's thread
     public void openDonation() {
         runOnUiThread(() -> {
@@ -376,6 +407,61 @@ public class MostWantedActivity extends SDLActivity {
         }
     }
 
+    // Share the exported log file(s) with the Android share sheet (Discord, Telegram, ...).
+    // Called from native code after EXPORT LOG copies the file(s); currentPath is the current
+    // run's log, prevPath the previous session's log (empty when there is none). Both logs go
+    // into one zip next to them in Download, and the zip is what gets shared — one file, so
+    // the receiver gets the whole session (including the crashed one) in a single attachment.
+    // The zip is shared through FileProvider, since file:// URIs are blocked since Android 7.
+    public void shareLogFiles(String currentPath, String prevPath) {
+        runOnUiThread(() -> {
+            try {
+                ArrayList<File> files = new ArrayList<>();
+                if (currentPath != null && !currentPath.isEmpty()) files.add(new File(currentPath));
+                if (prevPath != null && !prevPath.isEmpty()) files.add(new File(prevPath));
+                if (files.isEmpty()) return;
+                // Zip name from the current log's name (carbon-log-YYYYMMDD-HHMMSS.zip), so the
+                // zip sits next to the logs it contains; fall back to the prev log's name.
+                File first = files.get(0);
+                String base = first.getName();
+                if (base.endsWith(".log")) base = base.substring(0, base.length() - 4);
+                // The zip goes beside the log when that folder is writable (Download, or the
+                // logs folder itself). On phones where it is not, fall back to the cache dir —
+                // the share must not die just because the zip cannot sit next to the log.
+                File zip = new File(first.getParentFile(), base + ".zip");
+                java.io.FileOutputStream zipOut = null;
+                try {
+                    zipOut = new java.io.FileOutputStream(zip);
+                } catch (Exception e) {
+                    zip = new File(getCacheDir(), base + ".zip");
+                    zipOut = new java.io.FileOutputStream(zip);
+                }
+                try (java.util.zip.ZipOutputStream zos =
+                             new java.util.zip.ZipOutputStream(zipOut)) {
+                    byte[] buf = new byte[8192];
+                    for (File f : files) {
+                        if (!f.exists()) continue;
+                        zos.putNextEntry(new java.util.zip.ZipEntry(f.getName()));
+                        try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+                            int n;
+                            while ((n = in.read(buf)) > 0) zos.write(buf, 0, n);
+                        }
+                        zos.closeEntry();
+                    }
+                }
+                Uri uri = LogFileProvider.getUriForFile(this, zip);
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType("application/zip");
+                send.putExtra(Intent.EXTRA_STREAM, uri);
+                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(Intent.createChooser(send, "Share log"));
+            } catch (Exception e) {
+                // no app to share with, or the file is gone: the copies in Download are still there
+                Toast.makeText(this, "Cannot share log", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
     // default.xbe or a disc image in the folder
     private static boolean hasGame(File dir) {
         if (new File(dir, "default.xbe").exists()) return true;
@@ -418,6 +504,26 @@ public class MostWantedActivity extends SDLActivity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == DriverManager.REQUEST) {
+            Uri uri = resultCode == RESULT_OK && data != null ? data.getData() : null;
+            if (uri == null) return;
+            Toast.makeText(this, R.string.custom_driver_installing, Toast.LENGTH_SHORT).show();
+            DriverManager.install(this, uri, (ok, dir, lib, name, err) -> {
+                if (ok) {
+                    nativeSetCustomDriver(dir, lib, name);
+                    if (!isFinishing() && (dialog == null || !dialog.isShowing())) {
+                        dialog = new AlertDialog.Builder(this)
+                                .setTitle(R.string.custom_driver_title)
+                                .setMessage(getString(R.string.custom_driver_installed, name))
+                                .setPositiveButton(android.R.string.ok, null)
+                                .show();
+                    }
+                } else {
+                    Toast.makeText(this, getString(R.string.custom_driver_failed, err), Toast.LENGTH_LONG).show();
+                }
+            });
+            return;
+        }
         if (requestCode != GameImporter.REQUEST) {
             super.onActivityResult(requestCode, resultCode, data);
             return;

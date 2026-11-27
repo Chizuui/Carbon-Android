@@ -43,17 +43,22 @@ foreach(i RANGE ${last})
 endforeach()
 file(SHA1 ${XBE} xbe_sha1)
 file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/image_sha1.cpp CONTENT "extern const char kImageSha1[] = \"${xbe_sha1}\";\n")
-# the build's version for the log: the commit when the project is in git, else unknown
-set(BUILD_COMMIT "unknown")
-find_package(Git QUIET)
-if(GIT_EXECUTABLE)
-    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD WORKING_DIRECTORY ${REPO}
-                    OUTPUT_VARIABLE head OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE failed)
-    if(NOT failed AND head)
-        set(BUILD_COMMIT ${head})
-    endif()
-endif()
-file(CONFIGURE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/build_info.h CONTENT "#define BUILD_COMMIT \"${BUILD_COMMIT}\"\n")
+# the build's version for the log: refreshed on every build so incremental builds never stay on a stale commit
+set(BUILD_INFO_HEADER ${CMAKE_CURRENT_BINARY_DIR}/build_info.h)
+set(BUILD_VERSION_FILE ${REPO}/app/build/build_version.txt)
+execute_process(COMMAND ${CMAKE_COMMAND}
+                -DREPO=${REPO}
+                -DOUT=${BUILD_INFO_HEADER}
+                -DVER_FILE=${BUILD_VERSION_FILE}
+                -P ${REPO}/cmake/gen_build_info.cmake)
+add_custom_target(update_build_info ALL
+                  COMMAND ${CMAKE_COMMAND}
+                          -DREPO=${REPO}
+                          -DOUT=${BUILD_INFO_HEADER}
+                          -DVER_FILE=${BUILD_VERSION_FILE}
+                          -P ${REPO}/cmake/gen_build_info.cmake
+                  BYPRODUCTS ${BUILD_INFO_HEADER}
+                  COMMENT "Updating build_info.h")
 
 # dependencies: SDL3 from the checkout Gradle makes (its Java side goes into the APK), the rest fetched
 set(SDL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL)
@@ -78,7 +83,9 @@ set(BUILD_EXTERNAL OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(glslang GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git GIT_TAG 16.0.0 GIT_SHALLOW TRUE)
 FetchContent_Declare(tomlplusplus GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git GIT_TAG v3.4.0 GIT_SHALLOW TRUE)
 FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG v1.91.0 GIT_SHALLOW TRUE)
-FetchContent_MakeAvailable(glslang tomlplusplus imgui)
+FetchContent_Declare(volk GIT_REPOSITORY https://github.com/zeux/volk.git GIT_TAG vulkan-sdk-1.3.296.0 GIT_SHALLOW TRUE)
+FetchContent_Declare(adrenotools GIT_REPOSITORY https://github.com/bylaws/libadrenotools.git GIT_TAG master GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(glslang tomlplusplus imgui volk adrenotools)
 
 # the SDK's runtime but its Windows parts, and those the game replaces (src/sound, src/d3d)
 file(GLOB RUNTIME_SOURCES ${SDK}/runtime/*/*.cpp)
@@ -96,20 +103,37 @@ set(IMGUI_SOURCES ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.c
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp)
 
 add_library(main SHARED ${RUNTIME_SOURCES} ${GAME_HOST_SOURCES} ${ANDROID_SOURCES} ${GEN_SOURCES} ${IMGUI_SOURCES}
-            ${CMAKE_CURRENT_BINARY_DIR}/image_sha1.cpp)
+            ${volk_SOURCE_DIR}/volk.c ${CMAKE_CURRENT_BINARY_DIR}/image_sha1.cpp)
+add_dependencies(main update_build_info)
 # compat/ for the SDK's x86 header, the SDK harness's for the Winsock and DXGI names its portable runtime uses
 target_include_directories(main PRIVATE ${NATIVE}/compat ${SDK}/harness/compat ${NATIVE} ${GAME} ${SDK}/runtime ${GEN}
-                           ${CMAKE_CURRENT_BINARY_DIR} ${glslang_SOURCE_DIR})
+                           ${CMAKE_CURRENT_BINARY_DIR} ${glslang_SOURCE_DIR} ${volk_SOURCE_DIR}
+                           ${adrenotools_SOURCE_DIR}/include)
 target_include_directories(main SYSTEM PRIVATE ${imgui_SOURCE_DIR})
 # x86 chars are signed, as the game's code and the runtime were written for
-target_compile_options(main PRIVATE -fno-strict-aliasing -fsigned-char)
+set(XBE_PGO_MODE "" CACHE STRING "PGO mode: generate or use")
+set(XBE_PGO_PROFILE "" CACHE FILEPATH "Merged .profdata path for XBE_PGO_MODE=use")
+if(XBE_PGO_MODE STREQUAL "generate")
+    target_compile_options(main PRIVATE -fno-strict-aliasing -fsigned-char -ffunction-sections -fdata-sections -fprofile-generate)
+    target_compile_definitions(main PRIVATE XBE_PGO_GENERATE=1)
+elseif(XBE_PGO_MODE STREQUAL "use")
+    if(NOT XBE_PGO_PROFILE OR NOT EXISTS "${XBE_PGO_PROFILE}")
+        message(FATAL_ERROR "XBE_PGO_MODE=use requires existing XBE_PGO_PROFILE")
+    endif()
+    target_compile_options(main PRIVATE -fno-strict-aliasing -fsigned-char -ffunction-sections -fdata-sections -flto=thin
+                           -fprofile-use=${XBE_PGO_PROFILE} -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date)
+else()
+    target_compile_options(main PRIVATE -fno-strict-aliasing -fsigned-char -ffunction-sections -fdata-sections -flto=thin)
+endif()
 set(HOST_SOURCES ${RUNTIME_SOURCES} ${GAME_HOST_SOURCES} ${ANDROID_SOURCES})
 set_source_files_properties(${HOST_SOURCES} PROPERTIES COMPILE_OPTIONS "-include;${NATIVE}/compat/crt.h")
 set_source_files_properties(${GEN_SOURCES} PROPERTIES
     COMPILE_OPTIONS "-O2;-w;-fno-strict-aliasing;-fsigned-char")
 set_source_files_properties(${NATIVE}/vk_shader.cpp PROPERTIES COMPILE_DEFINITIONS ENABLE_HLSL)
+set_source_files_properties(${NATIVE}/vulkan.cpp ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp ${volk_SOURCE_DIR}/volk.c
+    PROPERTIES COMPILE_DEFINITIONS "VK_NO_PROTOTYPES;VK_USE_PLATFORM_ANDROID_KHR;IMGUI_IMPL_VULKAN_NO_PROTOTYPES")
 target_link_libraries(main PRIVATE SDL3::SDL3 tomlplusplus::tomlplusplus glslang glslang-default-resource-limits
-                      vulkan android log)
+                      adrenotools dl android log)
 # -PverboseLog: the info lines in the log of a release build too
 option(XBE_VERBOSE_LOG "log info lines in a release build" OFF)
 if(XBE_VERBOSE_LOG)
@@ -121,4 +145,13 @@ if(XBE_SHARED_DIR)
                                XBE_SETTINGS="${XBE_SETTINGS}" XBE_LOG="${XBE_LOG}")
 endif()
 # 16 KB pages, as Android 15 devices may have
-target_link_options(main PRIVATE -Wl,-z,max-page-size=16384)
+if(XBE_PGO_MODE STREQUAL "generate")
+    target_link_options(main PRIVATE -Wl,-z,max-page-size=16384 -Wl,--gc-sections -fprofile-generate)
+elseif(XBE_PGO_MODE STREQUAL "use")
+    target_link_options(main PRIVATE -Wl,-z,max-page-size=16384 -Wl,--gc-sections -flto=thin -Wl,--icf=safe
+                        -Wl,--thinlto-cache-dir=${CMAKE_CURRENT_BINARY_DIR}/thinlto-cache
+                        -fprofile-use=${XBE_PGO_PROFILE})
+else()
+    target_link_options(main PRIVATE -Wl,-z,max-page-size=16384 -Wl,--gc-sections -flto=thin -Wl,--icf=safe
+                        -Wl,--thinlto-cache-dir=${CMAKE_CURRENT_BINARY_DIR}/thinlto-cache)
+endif()

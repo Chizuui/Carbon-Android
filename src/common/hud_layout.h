@@ -7,7 +7,7 @@
 // offsets
 namespace game {
 
-enum HudItem : size_t { kHudSpeedometer, kHudMinimap, kHudRaceInfo, kHudTrax, kHudItems };
+enum HudItem : size_t { kHudSpeedometer, kHudMinimap, kHudRaceInfo, kHudWingman, kHudTrax, kHudItems };
 
 // FEng's screen: its origin the frame's middle, 480 high, x right and y down
 struct HudBox {
@@ -16,7 +16,12 @@ struct HudBox {
 };
 // as HUD_SingleRace.fng and EA_TRAX.fng draw them, measured off the frame; the race's information with three racers
 inline constexpr HudBox kHudBoxes[kHudItems] = {
-    {307, 133, 80, 78}, {-307, 131, 68, 68}, {296, -136, 78, 64}, {-168, -183, 176, 32}};
+    {250, 165, 85, 72},    // kHudSpeedometer (bottom right)
+    {-255, 165, 68, 68},   // kHudMinimap (bottom left)
+    {250, -155, 82, 68},   // kHudRaceInfo (top right)
+    {-255, -148, 64, 24},  // kHudWingman (top left, Crew / Wingman bar)
+    {-168, -188, 140, 26}, // kHudTrax (EA Trax banner)
+};
 
 // how far each is moved, FEng units; the editor writes them, the game thread reads them at each present
 inline std::atomic<float> g_hud_x[kHudItems] = {}, g_hud_y[kHudItems] = {};

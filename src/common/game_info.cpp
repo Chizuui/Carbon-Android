@@ -33,6 +33,9 @@ void Load(const void* table) {
     std::string language = t["language"].value_or(o.language);
     // a language no longer offered (French, German, Italian, Spanish) goes back to English
     if (KnownLanguage(language) && LanguageAvailable(language)) o.language = language;
+    o.gpu_driver_dir = t["gpu_driver_dir"].value_or(o.gpu_driver_dir);
+    o.gpu_driver_lib = t["gpu_driver_lib"].value_or(o.gpu_driver_lib);
+    o.gpu_driver_name = t["gpu_driver_name"].value_or(o.gpu_driver_name);
     if (const toml::table* keys = t["keys"].as_table())
         for (auto&& [id, value] : *keys)
             if (auto v = value.value<std::string>()) o.keys[std::string(id.str())] = *v;
@@ -53,6 +56,9 @@ void Save(void* table) {
     toml::table& t = *static_cast<toml::table*>(table);
     const Options& o = Opt();
     t.insert("language", o.language);
+    t.insert("gpu_driver_dir", o.gpu_driver_dir);
+    t.insert("gpu_driver_lib", o.gpu_driver_lib);
+    t.insert("gpu_driver_name", o.gpu_driver_name);
     toml::table keys;
     for (const auto& [id, value] : o.keys) keys.insert(id, value);
     t.insert("keys", keys);
@@ -107,12 +113,15 @@ const app::GameInfo app::kGame = {
                 {"yellow_tint", &game::Opt().yellow_tint, nullptr},
                 {"motion_blur", &game::Opt().motion_blur, nullptr},
                 {"light_flares", &game::Opt().light_flares, nullptr},
+                {"headlights", &game::Opt().headlights, nullptr},
                 {"shader_preload", &game::Opt().shader_preload, nullptr},
                 {"cheat_nos", &game::Opt().cheat_nos, nullptr},
                 {"cheat_speedbreaker", &game::Opt().cheat_speedbreaker, nullptr},
                 {"cheat_cash", &game::Opt().cheat_cash, nullptr},
                 {"cheat_no_police", &game::Opt().cheat_no_police, nullptr},
                 {"cheat_unlock_all", &game::Opt().cheat_unlock_all, nullptr},
+                {"cheat_freeze_ai", &game::Opt().cheat_freeze_ai, nullptr},
+                {"ai_difficulty", nullptr, &game::Opt().ai_difficulty},
                 {"skip_movies", &game::Opt().skip_movies, nullptr},
                 {"fps_usage", &game::Opt().fps_usage, nullptr},
                 {"fps_temps", &game::Opt().fps_temps, nullptr},

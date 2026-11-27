@@ -36,3 +36,6 @@ mostwanted.toml
 
 # Local temporary folder
 .local
+
+# PGO raw dumps (only merged .profdata is committed)
+*.profraw

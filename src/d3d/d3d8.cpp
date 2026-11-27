@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <map>
 #include <set>
@@ -365,6 +366,8 @@ void FreeSurface(uint32_t hdr, bool titles = false) {
 // Carbon never trades their memory before a Swap (its present path calls D3DDevice_Swap directly) — so the host
 // copies only follow the title's current data pointers (SyncTitleBuffers) and the title's headers are never
 // written here.
+uint32_t g_last_title_data[3] = {};
+
 void CopyTitleBuffers(const PresentParams& p) {
     for (uint32_t i = 0; i < g_buffer_count; i++) {
         // the library's list is back buffers then the front; here the front is first
@@ -385,6 +388,7 @@ void CopyTitleBuffers(const PresentParams& p) {
 
 void CreateBuffers(const PresentParams& p) {
     g_present = p;
+    g_last_title_data[0] = g_last_title_data[1] = g_last_title_data[2] = 0;
     uint32_t color_fmt = gpu::LinearColorFormat(p.format);
     g_buffer_count = std::min<uint32_t>(p.count + 1, 3);
     bool titles = true;
@@ -785,26 +789,32 @@ uint64_t g_synced_swaps = 0, g_rotated_swaps = 0;
 // treatment samples the buffer being drawn instead of the finished one and the scene goes black every other frame,
 // the directly drawn UI steady on top. copy the title's current data pointers into the host copies, in the same
 // mapping as CopyTitleBuffers; true when any of them moved, so the caller rotates only when the title did not
-bool SyncTitleBuffers() {
-    if (g_buffer_count < 2) return false;
+enum class TitleSync { kUnavailable, kStatic, kMoved };
+
+TitleSync SyncTitleBuffers() {
+    if (g_buffer_count < 2) return TitleSync::kUnavailable;
     for (uint32_t i = 0; i < g_buffer_count; i++)
-        if (!g_buffers_titles[i]) return false;
+        if (!g_buffers_titles[i]) return TitleSync::kUnavailable;
     uint32_t data[3] = {}, lock[3] = {};
     for (uint32_t i = 0; i < g_buffer_count; i++) {
         uint32_t src = g_present.surfaces[i == 0 ? g_buffer_count - 1 : i - 1];
-        if (!src || !mem::IsCommitted(src + 11)) return false;
+        if (!src || !mem::IsCommitted(src + 11)) return TitleSync::kUnavailable;
         uint32_t d = R32(src + kResData);
-        if (!d) return false;
+        if (!d) return TitleSync::kUnavailable;
         data[i] = d;
         lock[i] = R32(src + kResLock);
     }
-    bool changed = false;
+    bool title_moved = false;
+    if (g_last_title_data[0] != 0) {
+        for (uint32_t i = 0; i < g_buffer_count; i++)
+            if (data[i] != g_last_title_data[i]) title_moved = true;
+    }
     for (uint32_t i = 0; i < g_buffer_count; i++) {
-        if (R32(g_buffers[i] + kResData) != data[i]) changed = true;
+        g_last_title_data[i] = data[i];
         W32(g_buffers[i] + kResData, data[i]);
         W32(g_buffers[i] + kResLock, lock[i]);
     }
-    return changed;
+    return title_moved ? TitleSync::kMoved : TitleSync::kStatic;
 }
 
 // perf diagnostic: once a second, where the frames' time went, per frame. The title's own time is what is left of its
@@ -910,11 +920,22 @@ HLE_STDCALL(D3DDevice_Swap, 1) {
                 uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(PerfClock::now() - paced).count()));
     // follow the title's own buffer headers when it traded them, else rotate the host copies as before: a title
     // that trades and a host that also rotates read different buffers on alternate frames
-    if (SyncTitleBuffers())
-        g_synced_swaps++;
-    else {
-        RotateBuffers();
-        g_rotated_swaps++;
+    switch (SyncTitleBuffers()) {
+        case TitleSync::kStatic:
+            // Title kept its buffer headers fixed (e.g. Carbon FeGarageMain): keep host copies aligned
+            // with title headers instead of rotating onto the other buffer and desyncing bloom/post-fx.
+            g_synced_swaps++;
+            break;
+        case TitleSync::kMoved:
+            // Title traded its buffer headers itself (e.g. racing): advance host copies one step to stay
+            // in lockstep with the title's next-frame buffer swap.
+            RotateBuffers();
+            g_rotated_swaps++;
+            break;
+        case TitleSync::kUnavailable:
+            RotateBuffers();
+            g_rotated_swaps++;
+            break;
     }
     if (g_presents % 120 == 0) {
         uint32_t title_data[3] = {}, host_data[3] = {};
@@ -1257,18 +1278,24 @@ HLE_STDCALL(D3DDevice_SetVertexShader, 1) {
 }
 
 HLE_FASTCALL(D3DDevice_SetVertexShaderConstant1Fast, 0) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    Walk(Dev(kDevPush));
     uint32_t reg = a[0];
     if (reg < kVsConstants) std::memcpy(g_state.vsc[reg].data(), HostPtr(a[1]), 16);
     return 0;
 }
 
 HLE_FASTCALL(D3DDevice_SetVertexShaderConstant1, 0) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    Walk(Dev(kDevPush));
     uint32_t reg = a[0];
     if (reg < kVsConstants) std::memcpy(g_state.vsc[reg].data(), HostPtr(a[1]), 16);
     return 0;
 }
 
 HLE_FASTCALL(D3DDevice_SetVertexShaderConstant4, 0) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    Walk(Dev(kDevPush));
     uint32_t reg = a[0];
     uint32_t src = a[1];
     for (uint32_t i = 0; i < 4 && reg + i < kVsConstants; i++) {
@@ -1278,6 +1305,8 @@ HLE_FASTCALL(D3DDevice_SetVertexShaderConstant4, 0) {
 }
 
 HLE_FASTCALL(D3DDevice_SetVertexShaderConstantNotInlineFast, 1) {
+    std::lock_guard<std::recursive_mutex> lock(g_lock);
+    Walk(Dev(kDevPush));
     uint32_t reg = a[0];
     uint32_t src = a[1];
     uint32_t dwords = a[2];
@@ -1562,6 +1591,220 @@ uint32_t UpVertices(const void* src, uint32_t bytes) {
     return g_up_header;
 }
 
+// Headlight road pool: a soft-edged, bright light cone on the road ahead of the player's car,
+// drawn as a pre-transformed (RHW) triangle-list mesh with additive blending and depth test.
+// Carbon never calls D3DDevice_SetLight, so the port's D3D light path cannot light the road.
+// Both camera+forward and world->clip come from the flare fan shader's VP constants (c0-c3).
+float g_pool_vp[16];  // VP rows c0..c3
+bool g_pool_vp_valid = false;
+
+void DrawHeadlightPool() {
+    if (!g_backend) return;
+    if (!game::Racing()) {
+        g_pool_vp_valid = false;
+        return;
+    }
+    if (!g_pool_vp_valid) {
+        static int no_vp_logs = 0;
+        if (no_vp_logs < 4) {
+            no_vp_logs++;
+            LOGR("d3d: headlight pool: no VP captured yet");
+        }
+        return;
+    }
+
+    const float* VP = g_pool_vp;
+    float a = VP[0], b = VP[1], c = VP[2];
+    float d = VP[4], e = VP[5], f = VP[6];
+    float g = VP[12], h = VP[13], i = VP[14];
+    float det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if (std::fabs(det) < 1e-9f) {
+        static int bad_det_logs = 0;
+        if (bad_det_logs < 4) {
+            bad_det_logs++;
+            LOGR("d3d: headlight pool: singular VP (det %.6f)", det);
+        }
+        return;
+    }
+
+    float inv[3][3] = {{(e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det},
+                       {(f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det},
+                       {(d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det}};
+    float cw0 = VP[3], cw1 = VP[7], cw3 = VP[15];
+    float cam[3], pt[3];
+    for (int k = 0; k < 3; k++) {
+        float bc[3] = {-cw0, -cw1, -cw3};
+        float bp[3] = {-cw0, -cw1, 1.0f - cw3};
+        cam[k] = inv[k][0] * bc[0] + inv[k][1] * bc[1] + inv[k][2] * bc[2];
+        pt[k] = inv[k][0] * bp[0] + inv[k][1] * bp[1] + inv[k][2] * bp[2];
+    }
+    float fwd[3] = {pt[0] - cam[0], pt[1] - cam[1], pt[2] - cam[2]};
+    float fl = std::sqrt(fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]);
+    if (fl < 1e-6f) {
+        static int bad_fwd_logs = 0;
+        if (bad_fwd_logs < 4) {
+            bad_fwd_logs++;
+            LOGR("d3d: headlight pool: degenerate fwd (fl %.6f)", fl);
+        }
+        return;
+    }
+    fwd[0] /= fl;
+    fwd[1] /= fl;
+    fwd[2] /= fl;
+
+    // Carbon's world space is Z-up (confirmed by flare positions: z ~ 45..80, x/y ~ 1200..5000).
+    // right = normalize(fwd x world_up).
+    float right[3];
+    {
+        float up[3] = {0.0f, 0.0f, 1.0f};
+        float r[3] = {fwd[1] * up[2] - fwd[2] * up[1], fwd[2] * up[0] - fwd[0] * up[2],
+                      fwd[0] * up[1] - fwd[1] * up[0]};
+        float rl = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+        if (rl < 1e-6f) {
+            right[0] = 1.0f;
+            right[1] = 0.0f;
+            right[2] = 0.0f;
+        } else {
+            right[0] = r[0] / rl;
+            right[1] = r[1] / rl;
+            right[2] = r[2] / rl;
+        }
+    }
+
+    float vw = float(g_state.viewport.w), vh = float(g_state.viewport.h);
+    float vx = float(g_state.viewport.x), vy = float(g_state.viewport.y);
+    if (vw <= 0 || vh <= 0) return;
+
+    // 5x5 dual-beam grid along the road ahead: starts in front of the car, bright dual cores,
+    // soft near/outer/far falloff to alpha 0, with depth test enabled for car/wall occlusion.
+    constexpr float kDist[5] = {11.0f, 17.0f, 30.0f, 55.0f, 95.0f};
+    constexpr float kHalfW[5] = {2.0f, 4.4f, 8.2f, 12.5f, 17.0f};
+    constexpr float kColX[5] = {-1.0f, -0.38f, 0.0f, 0.38f, 1.0f};
+    constexpr float kColW[5] = {0.0f, 1.0f, 0.72f, 1.0f, 0.0f};
+    constexpr uint32_t kRowAlpha[5] = {0x00u, 0x5Cu, 0x48u, 0x20u, 0x00u};
+    constexpr uint32_t kWarmRgb = 0x00FFEAD0u;
+
+    struct PoolVert {
+        float x, y, z, rhw;
+        uint32_t color;
+    };
+    PoolVert grid[5][5];
+    for (int r = 0; r < 5; r++) {
+        float d_r = kDist[r];
+        float w_r = kHalfW[r];
+        float z_r = cam[2] - 1.65f + fwd[2] * d_r;
+        for (int c_idx = 0; c_idx < 5; c_idx++) {
+            float side = w_r * kColX[c_idx];
+            float p[4] = {cam[0] + fwd[0] * d_r + right[0] * side,
+                          cam[1] + fwd[1] * d_r + right[1] * side,
+                          z_r, 1.0f};
+            float clip[4] = {};
+            for (int j = 0; j < 4; j++)
+                clip[j] = p[0] * VP[j * 4 + 0] + p[1] * VP[j * 4 + 1] + p[2] * VP[j * 4 + 2] + p[3] * VP[j * 4 + 3];
+            if (clip[3] <= 0.1f) {
+                static int clip_logs = 0;
+                if (clip_logs < 4) {
+                    clip_logs++;
+                    LOGR("d3d: headlight pool: behind near plane r=%d c=%d w=%.3f", r, c_idx, clip[3]);
+                }
+                return;
+            }
+            float ndc_x = clip[0] / clip[3], ndc_y = clip[1] / clip[3], ndc_z = clip[2] / clip[3];
+            grid[r][c_idx].x = (ndc_x + 1.0f) * 0.5f * vw + vx;
+            grid[r][c_idx].y = (1.0f - ndc_y) * 0.5f * vh + vy;
+            grid[r][c_idx].z = std::clamp(ndc_z, 0.0f, 1.0f);
+            grid[r][c_idx].rhw = 1.0f;
+            uint32_t alpha = uint32_t(float(kRowAlpha[r]) * kColW[c_idx] + 0.5f);
+            grid[r][c_idx].color = (alpha << 24) | kWarmRgb;
+        }
+    }
+
+    static int pool_logs = 0;
+    if (pool_logs < 4) {
+        pool_logs++;
+        LOGR("d3d: headlight pool cam=(%.1f,%.1f,%.1f) fwd=(%.2f,%.2f,%.2f) zs=%08X near=(%.0f,%.0f) far=(%.0f,%.0f)",
+             cam[0], cam[1], cam[2], fwd[0], fwd[1], fwd[2], g_state.zs.data,
+             grid[1][2].x, grid[1][2].y, grid[4][2].x, grid[4][2].y);
+    }
+
+    // 4 rows x 4 quads = 16 quads = 32 triangles = 96 vertices (D3DPT_TRIANGLELIST)
+    PoolVert verts[96];
+    int vi = 0;
+    for (int r = 0; r < 4; r++) {
+        for (int c_idx = 0; c_idx < 4; c_idx++) {
+            const PoolVert& v00 = grid[r][c_idx];
+            const PoolVert& v01 = grid[r][c_idx + 1];
+            const PoolVert& v10 = grid[r + 1][c_idx];
+            const PoolVert& v11 = grid[r + 1][c_idx + 1];
+            verts[vi++] = v00;
+            verts[vi++] = v01;
+            verts[vi++] = v11;
+            verts[vi++] = v00;
+            verts[vi++] = v11;
+            verts[vi++] = v10;
+        }
+    }
+
+    auto saved_vs_handle = g_state.vs_handle;
+    auto saved_vs = g_state.vs;
+    auto saved_ps = g_state.ps;
+    uint32_t saved_tex0 = g_state.textures[0];
+    uint32_t saved_tss0 = g_state.tss[0][gpu::kTssColorOp];
+    uint32_t saved_cull = g_state.rs[gpu::kRsCullMode];
+    uint32_t saved_zen = g_state.rs[gpu::kRsZEnable];
+    uint32_t saved_zfunc = g_state.simple[gpu::kMZFunc >> 2];
+    uint32_t saved_sten = g_state.rs[gpu::kRsStencilEnable];
+    uint32_t saved_fog = g_state.rs[gpu::kRsFogEnable];
+    uint32_t saved_atest = g_state.simple[gpu::kMAlphaTestEnable >> 2];
+    uint32_t saved_cwrite = g_state.simple[gpu::kMColorWriteEnable >> 2];
+    uint32_t saved_blend = g_state.simple[gpu::kMBlendEnable >> 2];
+    uint32_t saved_src = g_state.simple[gpu::kMSrcBlend >> 2];
+    uint32_t saved_dst = g_state.simple[gpu::kMDestBlend >> 2];
+    uint32_t saved_bop = g_state.simple[gpu::kMBlendOp >> 2];
+    uint32_t saved_zw = g_state.simple[gpu::kMZWriteEnable >> 2];
+    auto saved_stream = g_state.streams[0];
+
+    g_state.vs_handle = 0x044;  // D3DFVF_XYZRHW | D3DFVF_DIFFUSE
+    g_state.vs = nullptr;
+    g_state.ps = nullptr;
+    g_state.textures[0] = 0;
+    g_state.tss[0][gpu::kTssColorOp] = 1;  // D3DTOP_DISABLE
+    g_state.rs[gpu::kRsCullMode] = 0;
+    g_state.rs[gpu::kRsZEnable] = 1;
+    g_state.simple[gpu::kMZFunc >> 2] = 0x203;  // GL_LEQUAL
+    g_state.rs[gpu::kRsStencilEnable] = 0;
+    g_state.rs[gpu::kRsFogEnable] = 0;
+    g_state.simple[gpu::kMAlphaTestEnable >> 2] = 0;
+    g_state.simple[gpu::kMColorWriteEnable >> 2] = 0x01010101u;
+    g_state.simple[gpu::kMBlendEnable >> 2] = 1;
+    g_state.simple[gpu::kMSrcBlend >> 2] = 0x302;  // SRC_ALPHA
+    g_state.simple[gpu::kMDestBlend >> 2] = 1;     // ONE
+    g_state.simple[gpu::kMBlendOp >> 2] = 0x8006;  // ADD
+    g_state.simple[gpu::kMZWriteEnable >> 2] = 0;
+    g_state.streams[0] = {UpVertices(verts, sizeof(verts)), 20};
+    CountTarget(false, 96);
+    g_backend->Draw(g_state, 5, 0, 96, nullptr);
+
+    g_state.streams[0] = saved_stream;
+    g_state.simple[gpu::kMZWriteEnable >> 2] = saved_zw;
+    g_state.simple[gpu::kMBlendOp >> 2] = saved_bop;
+    g_state.simple[gpu::kMDestBlend >> 2] = saved_dst;
+    g_state.simple[gpu::kMSrcBlend >> 2] = saved_src;
+    g_state.simple[gpu::kMBlendEnable >> 2] = saved_blend;
+    g_state.simple[gpu::kMColorWriteEnable >> 2] = saved_cwrite;
+    g_state.simple[gpu::kMAlphaTestEnable >> 2] = saved_atest;
+    g_state.rs[gpu::kRsFogEnable] = saved_fog;
+    g_state.rs[gpu::kRsStencilEnable] = saved_sten;
+    g_state.simple[gpu::kMZFunc >> 2] = saved_zfunc;
+    g_state.rs[gpu::kRsZEnable] = saved_zen;
+    g_state.rs[gpu::kRsCullMode] = saved_cull;
+    g_state.tss[0][gpu::kTssColorOp] = saved_tss0;
+    g_state.textures[0] = saved_tex0;
+    g_state.ps = saved_ps;
+    g_state.vs = saved_vs;
+    g_state.vs_handle = saved_vs_handle;
+}
+
 void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride) {
     if (!g_backend || !count || !stride) return;
     SyncDeferred();
@@ -1598,15 +1841,32 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                  stride);
         }
     }
-    // the flare pass (sub_0010EC90) draws its quads and trails here; log what it actually draws, so the next
-    // clamp targets the real pattern instead of the bloom copies
+    // the flare pass (sub_0010EC90) draws its quads and trails here; log state for the first 12 draws
     if (game::g_flare_pass) {
+        if (prim == 7 && count == 4 && stride == 32) {
+            for (int r = 0; r < 4; r++)
+                for (int c = 0; c < 4; c++) g_pool_vp[r * 4 + c] = g_state.vsc[96 + r][c];
+            g_pool_vp_valid = true;
+        }
         static int flare_pass_dumps = 0;
         if (flare_pass_dumps < 12) {
             flare_pass_dumps++;
-            LOGR("d3d: flare pass draw prim %u count %u stride %u vs %08X vp %ux%u", prim, count, stride,
-                 g_state.vs_handle, g_state.viewport.w, g_state.viewport.h);
-            if ((prim == 7 && count == 4 && stride == 32) || (prim == 5 && count == 3 && stride == 24)) {
+            LOGR("d3d: flare pass draw prim %u count %u stride %u vs %08X vp %ux%u z_en=%u cull=%X bcol=%08X tex0=%08X rt=%08X",
+                 prim, count, stride, g_state.vs_handle, g_state.viewport.w, g_state.viewport.h,
+                 g_state.rs[gpu::kRsZEnable], g_state.rs[gpu::kRsCullMode], g_state.simple[gpu::kMBlendColor >> 2],
+                 g_state.textures[0], g_state.rt.data);
+            if (prim == 7 && count == 4 && stride == 32) {
+                const uint8_t* b = static_cast<const uint8_t*>(vertices);
+                for (uint32_t i = 0; i < count; i++) {
+                    float f[3];
+                    uint32_t col = 0;
+                    float uv[2];
+                    std::memcpy(f, b + i * stride, 12);
+                    std::memcpy(&col, b + i * stride + 12, 4);
+                    std::memcpy(uv, b + i * stride + 16, 8);
+                    LOGR("d3d: flare v%u %.2f %.2f %.2f col=%08X uv=%.3f,%.3f", i, f[0], f[1], f[2], col, uv[0], uv[1]);
+                }
+            } else if (prim == 5 && count == 3 && stride == 24) {
                 const uint8_t* b = static_cast<const uint8_t*>(vertices);
                 for (uint32_t i = 0; i < count; i++) {
                     float f[3];
@@ -1668,34 +1928,6 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
             }
         }
     }
-    // the fans and trails come out as static on Vulkan, so skip them outright while the flare pass runs; the
-    // fullscreen composite quad is skipped below for the same reason
-    if (game::g_flare_pass && ((prim == 7 && count == 4 && stride == 32) || (prim == 5 && count == 3 && stride == 24))) {
-        return;
-    }
-    // the flare pass ends with a fullscreen composite quad (one 640x480, or two 640x240 halves in the loop
-    // path): a textured overlay over the whole frame. Carbon's real headlight glow is the fan billboard,
-    // skipped above because it comes out as static on Vulkan, so with nothing underneath the composite only
-    // washes the screen white. Skip it outright while the flare pass runs. There is no small prim-8 core
-    // glow in Carbon to enlarge (the earlier 3x enlargement targeted a glow that does not exist), so that
-    // code is gone; a fullscreen quad here is the composite, not a glow
-    if (game::g_flare_pass && prim == 8 && count == 4 && stride == 28) {
-        const uint8_t* b = static_cast<const uint8_t*>(draw_vertices);
-        float v[4][7];
-        for (int i = 0; i < 4; i++) std::memcpy(v[i], b + i * stride, 28);
-        float vw = float(g_state.viewport.w), vh = float(g_state.viewport.h);
-        float minx = v[0][0], maxx = v[0][0], miny = v[0][1], maxy = v[0][1];
-        for (int i = 1; i < 4; i++) {
-            minx = std::min(minx, v[i][0]);
-            maxx = std::max(maxx, v[i][0]);
-            miny = std::min(miny, v[i][1]);
-            maxy = std::max(maxy, v[i][1]);
-        }
-        float w = maxx - minx, h = maxy - miny;
-        if (vw > 0 && vh > 0 && w >= vw * 0.9f && h >= vh * 0.4f) {
-            return;
-        }
-    }
     // the flare streaks (triangle list, stride 24) are the other half of the pass; log the first few that span
     // more than the viewport while their vertices sit at screen-space depth, so a night race shows whether the
     // trails are the giant lines too; a single triangle is a fullscreen effect, not a trail
@@ -1722,6 +1954,27 @@ void DrawUp(uint32_t prim, uint32_t count, const void* vertices, uint32_t stride
                          minx, miny, maxx - minx, maxy - miny);
                 }
             }
+        }
+    }
+    if (game::g_flare_pass && prim == 5 && count == 3 && stride == 24) {
+        uint32_t bcol = g_state.simple[gpu::kMBlendColor >> 2];
+        static int prim5_zero_logs = 0, prim5_move_logs = 0;
+        if ((bcol == 0 && prim5_zero_logs++ < 1) || (bcol != 0 && prim5_move_logs++ < 1)) {
+            LOGR("d3d: prim5 diag bcol=%08X blend=%u(%X,%X,%X) at=%u(%X,%u) cw=%08X cull=%X sc=%u vp=%u,%u %ux%u",
+                 bcol, g_state.simple[gpu::kMBlendEnable >> 2], g_state.simple[gpu::kMSrcBlend >> 2],
+                 g_state.simple[gpu::kMDestBlend >> 2], g_state.simple[gpu::kMBlendOp >> 2],
+                 g_state.simple[gpu::kMAlphaTestEnable >> 2], g_state.simple[gpu::kMAlphaFunc >> 2],
+                 g_state.simple[gpu::kMAlphaRef >> 2], g_state.simple[gpu::kMColorWriteEnable >> 2],
+                 g_state.rs[gpu::kRsCullMode], g_state.scissor_count,
+                 g_state.viewport.x, g_state.viewport.y, g_state.viewport.w, g_state.viewport.h);
+            LOGR("d3d: prim5 c0=(%.3f,%.3f,%.3f,%.3f) c1=(%.3f,%.3f,%.3f,%.3f) c2=(%.3f,%.3f,%.3f,%.3f) c3=(%.3f,%.3f,%.3f,%.3f)",
+                 g_state.vsc[96][0], g_state.vsc[96][1], g_state.vsc[96][2], g_state.vsc[96][3],
+                 g_state.vsc[97][0], g_state.vsc[97][1], g_state.vsc[97][2], g_state.vsc[97][3],
+                 g_state.vsc[98][0], g_state.vsc[98][1], g_state.vsc[98][2], g_state.vsc[98][3],
+                 g_state.vsc[99][0], g_state.vsc[99][1], g_state.vsc[99][2], g_state.vsc[99][3]);
+            LOGR("d3d: prim5 c64=(%.3f,%.3f,%.3f,%.3f) c65=(%.3f,%.3f,%.3f,%.3f)",
+                 g_state.vsc[160][0], g_state.vsc[160][1], g_state.vsc[160][2], g_state.vsc[160][3],
+                 g_state.vsc[161][0], g_state.vsc[161][1], g_state.vsc[161][2], g_state.vsc[161][3]);
         }
     }
     g_state.streams[0] = {UpVertices(draw_vertices, count * stride), stride};

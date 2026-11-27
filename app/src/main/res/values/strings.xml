@@ -52,4 +52,11 @@
     <string name="game_imported">Game imported</string>
     <string name="game_imported_text">%1$s is in place. The game starts in a moment.</string>
     <string name="import_failed">Import failed</string>
+
+    <!-- custom GPU driver -->
+    <string name="custom_driver_title">Custom GPU Driver</string>
+    <string name="custom_driver_installing">Installing driver…</string>
+    <string name="custom_driver_installed">Installed %1$s.\n\nRestart the app to apply the new GPU driver.</string>
+    <string name="custom_driver_reset">Reset to the system GPU driver.\n\nRestart the app to apply.</string>
+    <string name="custom_driver_failed">Driver install failed: %1$s</string>
 </resources>

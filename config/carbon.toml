@@ -11,6 +11,9 @@ code_sections = [".text", "D3D", "D3DX", "XGRPH", "DSOUND", "XPP"]
 
 # extra entry points
 [functions]
+0x176F12 = "sub_00176F12"
+0x176F51 = "sub_00176F51"
+0x176F50 = "sub_00176F50"
 
 # functions the host replaces or calls by name, 0 where the image has none
 [symbols]

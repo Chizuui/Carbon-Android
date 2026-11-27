@@ -113,7 +113,6 @@ void ApplyGraphicsSwitches() {
 constexpr uint32_t kInfiniteNos = 0x49A61C, kInfiniteSpeedbreaker = 0x4B9694;
 constexpr uint32_t kFeDatabase = 0x48EDD4, kProfileCash = 0xB4, kCheatCash = 9999999;
 constexpr uint32_t kCopManager = 0x494E40, kNoNewCops = 0x60;
-constexpr uint32_t kUnlockAllThings = 0x493D00;
 
 // a game byte a cheat holds at 1 while on, given back as it was when it goes off or its object is made again
 struct HeldByte {
@@ -143,10 +142,9 @@ void ApplyCheats() {
         uint32_t profile = db && mem::IsCommitted(db + 0x10) ? kernel::R32(db + 0x10) : 0;
         if (profile && mem::IsCommitted(profile + kProfileCash)) kernel::W32(profile + kProfileCash, kCheatCash);
     }
-    static HeldByte no_cops, unlock_all;
+    static HeldByte no_cops;
     uint32_t mgr = kernel::R32(kCopManager);
     no_cops.Apply(o.cheat_no_police, mgr && mem::IsCommitted(mgr + kNoNewCops) ? mgr + kNoNewCops : 0);
-    unlock_all.Apply(o.cheat_unlock_all, kUnlockAllThings);
 }
 
 // The movies' screens skip on A or START: FEAnyMovie (0x116230, the FE's and the story's), InGameAnyMovie (0x131A30)

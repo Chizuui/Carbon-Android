@@ -1356,12 +1356,11 @@ std::atomic<float> g_gpu_load{-1};
 
 // ---- Init
 
-bool LoadVulkanDriver() {
-    static bool loaded = false;
-    if (loaded) return true;
+bool LoadVulkanDriver(bool try_custom, bool& used_custom) {
+    used_custom = false;
     void* handle = nullptr;
     const auto& o = game::Opt();
-    if (!o.gpu_driver_dir.empty() && !o.gpu_driver_lib.empty()) {
+    if (try_custom && !o.gpu_driver_dir.empty() && !o.gpu_driver_lib.empty()) {
         std::string dir = o.gpu_driver_dir;
         if (dir.back() != '/') dir += '/';
         std::string so_path = dir + o.gpu_driver_lib;
@@ -1378,6 +1377,7 @@ bool LoadVulkanDriver() {
                 hook_dir.empty() ? nullptr : hook_dir.c_str(),
                 dir.c_str(), o.gpu_driver_lib.c_str(), nullptr, nullptr);
             if (handle) {
+                used_custom = true;
                 LOGR("vulkan: custom driver loaded: %s (%s)",
                      o.gpu_driver_name.empty() ? o.gpu_driver_lib.c_str() : o.gpu_driver_name.c_str(),
                      o.gpu_driver_lib.c_str());
@@ -1394,12 +1394,21 @@ bool LoadVulkanDriver() {
         return false;
     }
     auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(handle, "vkGetInstanceProcAddr"));
+    if (!gipa && used_custom) {
+        LOGE("vulkan: vkGetInstanceProcAddr not found in custom driver, falling back to system");
+        used_custom = false;
+        handle = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+        if (!handle) {
+            LOGE("vulkan: dlopen libvulkan.so failed: %s", dlerror());
+            return false;
+        }
+        gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(handle, "vkGetInstanceProcAddr"));
+    }
     if (!gipa) {
         LOGE("vulkan: vkGetInstanceProcAddr not found in driver");
         return false;
     }
     volkInitializeCustom(gipa);
-    loaded = true;
     return true;
 }
 
@@ -1407,7 +1416,26 @@ bool VulkanBackend::Init(uint32_t width, uint32_t height) {
     guest_w_ = width;
     guest_h_ = height;
     vkshader::Init(app::ExeDir() / "shadercache");
-    if (!LoadVulkanDriver() || !CreateInstance() || !CreateSurface() || !PickDevice() || !CreateDevice()) return false;
+    auto init_device = [&](bool try_custom, bool& used_custom) -> bool {
+        return LoadVulkanDriver(try_custom, used_custom) && CreateInstance() && CreateSurface() && PickDevice() &&
+               CreateDevice();
+    };
+    bool used_custom = false;
+    if (!init_device(true, used_custom)) {
+        if (!used_custom) return false;
+        if (surface_ && instance_ && vkDestroySurfaceKHR) vkDestroySurfaceKHR(instance_, surface_, nullptr);
+        if (instance_ && vkDestroyInstance) vkDestroyInstance(instance_, nullptr);
+        surface_ = VK_NULL_HANDLE;
+        instance_ = VK_NULL_HANDLE;
+        pd_ = VK_NULL_HANDLE;
+        dev_ = VK_NULL_HANDLE;
+        queue_ = VK_NULL_HANDLE;
+        surface_failures_ = 0;
+        LOGE("vulkan: custom driver failed to initialize GPU, resetting to system driver");
+        host::ResetCustomDriver();
+        bool fallback_custom = false;
+        if (!init_device(false, fallback_custom)) return false;
+    }
     alloc_.Init(pd_, dev_);
     if (!CreateLayouts() || !CreateFrames() || !CreateSwapchain() || !CreateFixedImages()) return false;
     Begin();

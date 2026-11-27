@@ -1,5 +1,12 @@
 # Changelog — NFS Carbon Android (`carbon-port`)
 
+- Custom GPU driver (Turnip / AdrenoTools `.zip` / `.so`) di settings + auto-fallback & auto-reset ke driver sistem jika driver gagal inisialisasi GPU (mencegah crash-loop).
+- Optimasi performa build: ThinLTO (`--icf=safe`, `--gc-sections`) dan Clang PGO (`pgo/carbon.profdata`).
+- Perbaikan drop FPS di Pause Menu (`FE Blur` dipangkas ke 1 pass + deduplikasi copy `Feedback()` Vulkan per draw) dan cutscene in-engine (skip `Depth of field`).
+- Lampu jalan native headlights diperbaiki (inisialisasi alpha `oD1`/`oB1 = 1.0` + boost shader aspal), refleksi kaca/mobil lebih bersih (clamping NV2A `PASSTHRU` & combiner), flicker bloom main menu diperbaiki (`SyncTitleBuffers`), dan native light flare trails dipulihkan.
+- AI & Cheat baru: `AI DIFFICULTY` (`DEFAULT`–`EXTREME` dengan scaling kecepatan + skip `GluePID`), `FREEZE OPPONENTS` (termasuk menahan Simple Physics agar lawan/bos jarak jauh tidak jalan lagi), serta `UNLOCK ALL` one-shot dengan popup peringatan & pemulihan state saat dimatikan.
+- HUD & utilitas: Crew Bar (`WINGMAN_PIP_CONTROL`) dipisah di HUD editor + perataan kotak HUD, perbaikan alignment jalur kuning minimap, dan `EXPORT LOG` sekarang membagikan 1 arsip `.zip` (`carbon.log` + `carbon-prev.log`) lewat share sheet Android.
+
 - Mobil tidak putih lagi pas PANTULAN MOBIL di OFF — pas OFF, muka cube refleksi tidak pernah digambar, jadi port tidak kenal lagi cube-nya dari target yang ada dan mobil jatuh ke langit siang bawaan game; sekarang port mengenali cube-nya dari objek teksturnya sendiri (live cube dan STATICENVMAP), jadi mobil dapat refleksi abu-abu gelap.
 - Mobil tidak putih lagi pas PANTULAN MOBIL bukan FULL — kalau cube refleksi belum sempat digambar (habis loading, atau rate di bawah FULL), mobil sekarang dapat refleksi abu-abu gelap, bukan cube langit siang bawaan game; plus cube dipaksa digambar di awal balapan biar langsung normal.
 - Vinyl di editor akhirnya bisa digeser — layarnya ternyata baca left stick, bukan sentuhan, jadi drag di vinyl sekarang diteruskan ke stick (D-pad atas/bawah juga gerak vertikal), dan swipe di layar itu tidak terbalik lagi.

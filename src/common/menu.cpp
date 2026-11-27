@@ -434,7 +434,7 @@ enum RowId { kRenderResolution, kMaxFps, kVsync, kFpsCounter, kAniso, kAudioOutp
              kGyroSensitivity, kTouchOpacity, kTouchSize, kTouchEdit, kCheckUpdates, kAspectRatio, kScreenFilter,
              kAntiAliasing, kFpsPosition, kFpsTemps, kStickMode, kBloom, kFog, kDonate, kGithub, kYoutube, kFpsUsage,
              kReflections, kParticles, kRain, kRainDrops, kShadows, kRoadReflections,
-             kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll, kCheatFreezeAi,
+             kCheatNos, kCheatSpeedbreaker, kCheatCash, kCheatNoPolice, kCheatUnlockAll, kCheatFreezeAi, kAiDifficulty,
              kSkipMovies, kYellowTint, kMotionBlur, kLightFlares, kHeadlights, kShaderPreload, kBrightness, kLowEndPreset,
              kMidPreset, kHighPreset, kExportLog, kDiscord, kOverlayLayout, kGpuDriver, kResetGpuDriver };
 
@@ -507,6 +507,7 @@ constexpr Row kCheatRows[] = {
     {Kind::Value, kCheatNoPolice, "NO POLICE"},
     {Kind::Value, kCheatUnlockAll, "UNLOCK ALL"},
     {Kind::Value, kCheatFreezeAi, "FREEZE OPPONENTS"},
+    {Kind::Value, kAiDifficulty, "AI DIFFICULTY"},
 };
 
 // the credits' names, an info row's id; as they are, untranslated
@@ -654,10 +655,16 @@ bool StepGraphicsRow(int id, int step, Settings& s, char (&text)[64]) {
     }
 }
 
+constexpr uint32_t kAiDifficulties[] = {0, 1, 2, 3, 4};
+const char* const kAiDifficultyNames[] = {"DEFAULT", "VERY EASY", "EASY", "HARD", "EXTREME"};
+
 // the general and touch rows that are no ON / OFF, stepped first
 void StepInputRow(int id, int step, char (&text)[64]) {
     game::Options& o = game::Opt();
     switch (id) {
+        case kAiDifficulty:
+            std::snprintf(text, sizeof(text), "%s", kAiDifficultyNames[StepTable(kAiDifficulties, o.ai_difficulty, step)]);
+            break;
         case kAudioOutput:
             std::snprintf(text, sizeof(text), "%s", kAudioOutputNames[StepTable(kAudioOutputs, o.audio_output, step)]);
             break;
@@ -755,6 +762,7 @@ void RestoreDefaults(int page) {
         o.cheat_no_police = none.cheat_no_police;
         o.cheat_unlock_all = none.cheat_unlock_all;
         o.cheat_freeze_ai = none.cheat_freeze_ai;
+        o.ai_difficulty = none.ai_difficulty;
         Changed();
         return;
     }

@@ -121,6 +121,7 @@ const app::GameInfo app::kGame = {
                 {"cheat_no_police", &game::Opt().cheat_no_police, nullptr},
                 {"cheat_unlock_all", &game::Opt().cheat_unlock_all, nullptr},
                 {"cheat_freeze_ai", &game::Opt().cheat_freeze_ai, nullptr},
+                {"ai_difficulty", nullptr, &game::Opt().ai_difficulty},
                 {"skip_movies", &game::Opt().skip_movies, nullptr},
                 {"fps_usage", &game::Opt().fps_usage, nullptr},
                 {"fps_temps", &game::Opt().fps_temps, nullptr},

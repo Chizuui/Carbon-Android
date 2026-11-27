@@ -1148,15 +1148,36 @@ X86_FUNC(sub_00031CA0) {
     }
 }
 
-// Skip GluePID::Update (0x32E50) for frozen opponent AI so rubberbanding forces don't push them.
+// Skip GluePID::Update (0x32E50) for frozen opponent AI or VERY EASY difficulty so rubberbanding doesn't push them.
 X86_EXTERN_FUNC(__imp__sub_00032E50);
 X86_FUNC(sub_00032E50) {
-    if (game::Opt().cheat_freeze_ai && game::IsCommittedRange(ctx.ecx, 0x14u) &&
+    bool skip_glue = game::Opt().cheat_freeze_ai || game::Opt().ai_difficulty == 1;
+    if (skip_glue && game::IsCommittedRange(ctx.ecx, 0x14u) &&
         !IsWingmanSimable(kernel::R32(ctx.ecx + 0x0Cu))) {
         ctx.esp += 8;  // ret 0x04
         return;
     }
     __imp__sub_00032E50(ctx, base);
+}
+
+// Scale AI opponent target race speed according to Options::ai_difficulty (0=default, 1=very easy, 2=easy,
+// 3=hard, 4=extreme). Excludes player (AIVehicleHuman) and Wingman (cached IAIWingman* at [this+0x80]).
+X86_EXTERN_FUNC(__imp__sub_0002F340);
+X86_FUNC(sub_0002F340) {
+    uint32_t self = ctx.ecx;
+    __imp__sub_0002F340(ctx, base);
+    uint32_t diff = game::Opt().ai_difficulty;
+    if (diff == 0 || diff > 4 || game::Opt().cheat_freeze_ai) return;
+    if (!game::IsCommittedRange(self, 0x84u)) return;
+    if (kernel::R32(self + 0x80u) != 0) return;  // Wingman (IAIWingman*)
+    uint32_t veh_ai = kernel::R32(self + 0x38u);
+    if (veh_ai < 0x10050u) return;
+    uint32_t ai_vehicle = veh_ai - 0x50u;
+    if (!game::IsCommittedRange(ai_vehicle, 4u) || kernel::R32(ai_vehicle) != kAIVehicleRacecarVtbl) return;
+    static constexpr double kScale[5] = {1.0, 0.70, 0.85, 1.12, 1.25};
+    double scaled = X87_ST(0) * kScale[diff];
+    X87_ST(0) = scaled;
+    X86_MEMF32(self + 0x6Cu) = static_cast<float>(scaled);
 }
 
 namespace game {

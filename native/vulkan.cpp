@@ -3193,7 +3193,8 @@ VkImageView VulkanBackend::BindTargetTexture(const State& s, int stage, const Te
     float k = float(t.w) / (t.gw * stages.k[stage]);
     bool blur = rt && t.gw < guest_w_ && rt->gw < guest_w_;
     if (!t.depth && t.gw < guest_w_) stages.small = true;
-    if (!t.depth && box && k > kUpscaledMin && rt && rt != &t && (blur || t.gw > rt->gw || t.gh > rt->gh)) {
+    if (!t.depth && box && k > kUpscaledMin && rt && rt != &t && rt->gw < guest_w_ / 2 &&
+        (blur || t.gw > rt->gw || t.gh > rt->gh)) {
         stages.wide[stage] = k;
         stages.blur[stage] = blur;
         info.flags |= kTexWide;

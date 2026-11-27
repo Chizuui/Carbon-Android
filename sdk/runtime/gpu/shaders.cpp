@@ -299,12 +299,12 @@ struct Ps {
         else r += in.chan ? ".a" : ".b";
         switch (in.mod) {
             // PS_INPUTMAPPING
-            case 0x00: return "max(" + r + ", 0)";
+            case 0x00: return "saturate(" + r + ")";
             case 0x20: return "(1 - saturate(" + r + "))";
-            case 0x40: return "(2 * max(" + r + ", 0) - 1)";
-            case 0x60: return "(-2 * max(" + r + ", 0) + 1)";
-            case 0x80: return "(max(" + r + ", 0) - 0.5)";
-            case 0xA0: return "(-max(" + r + ", 0) + 0.5)";
+            case 0x40: return "(2 * saturate(" + r + ") - 1)";
+            case 0x60: return "(-2 * saturate(" + r + ") + 1)";
+            case 0x80: return "(saturate(" + r + ") - 0.5)";
+            case 0xA0: return "(-saturate(" + r + ") + 0.5)";
             case 0xC0: return r;
             default: return "-" + r;
         }
@@ -436,7 +436,7 @@ std::string TexFetch(const PixelKey& k, int i) {
         case 1: return t.shadow ? depth("0") : put(sample2(F("%s.xy / %s.w", q, q)));
         case 2: return t.shadow ? depth(F("%s.z / %s.w", q, q)) : put(sample3(F("%s.xyz / %s.w", q, q)));
         case 3: return put(sample3(tc + ".xyz"));
-        case 4: return put(tc);
+        case 4: return put("clamp(" + tc + ", -1, 1)");
         case 5:  // clip plane: a set compare_mode bit kills at >= 0, a clear one below 0
             s = put("0");
             for (int j = 0; j < 4; j++) s += F("if (%s.%c %s 0) discard;\n", q, "xyzw"[j], ((k.compare_mode >> (i * 4 + j)) & 1) ? ">=" : "<");

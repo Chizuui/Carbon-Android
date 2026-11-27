@@ -51,7 +51,7 @@ struct Options {
     bool cheat_no_police = false;     // no new cops or pursuits
     bool cheat_unlock_all = false;    // unlocks every car, part and race while ON; restores previous value when OFF
     bool cheat_freeze_ai = false;     // freezes AI racecar opponents (excludes player and wingman)
-    uint32_t ai_difficulty = 0;       // 0 default, 1 very easy (0.70x), 2 easy (0.85x), 3 hard (1.12x), 4 extreme (1.25x)
+    uint32_t ai_difficulty = 0;       // 0 default, 1 very easy (0.55x speed/gas, no glue), 2 easy (0.72x speed, 0.75x gas, no glue), 3 hard (1.12x), 4 extreme (1.25x)
     bool skip_movies = false;     // currently does nothing: the 0x46D7A0 flag it used to write is unproven as the skip-movies flag, so the write was removed (src/carbon/carbon.cpp)
     uint32_t audio_output = 0;  // audio::kOutputAuto, kOutputStereo, kOutputSurround or kOutputMono
     std::string language = "int";  // one of kLanguages

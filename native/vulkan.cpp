@@ -1313,6 +1313,7 @@ private:
     // what a reflection the game no longer draws is read as, opaque: the car paint and road shaders weigh by its alpha.
     // A dark grey cube for CAR REFLECTIONS off, black for ROAD REFLECTIONS off
     Image env_off_;
+    Image env_off_2d_;
     Image road_off_;
     VkSampler linear_ = VK_NULL_HANDLE, point_ = VK_NULL_HANDLE;
     VkDescriptorPool ui_pool_ = VK_NULL_HANDLE;
@@ -1860,6 +1861,7 @@ bool VulkanBackend::CreateFixedImages() {
         !CreateImage(dummy_[1], kBgra, 1, 1, 1, 1, 1, kSampled, VK_IMAGE_VIEW_TYPE_3D) ||
         !CreateImage(dummy_[2], kBgra, 1, 1, 1, 6, 1, kSampled, VK_IMAGE_VIEW_TYPE_CUBE, true) ||
         !CreateImage(env_off_, kBgra, 1, 1, 1, 6, 1, kSampled, VK_IMAGE_VIEW_TYPE_CUBE, true) ||
+        !CreateImage(env_off_2d_, kBgra, 1, 1, 1, 1, 1, kSampled, VK_IMAGE_VIEW_TYPE_2D) ||
         !CreateImage(road_off_, kBgra, 1, 1, 1, 1, 1, kSampled, VK_IMAGE_VIEW_TYPE_2D))
         return false;
     VkSamplerCreateInfo sc{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -1881,7 +1883,7 @@ bool VulkanBackend::CreateFixedImages() {
         Transition(*im, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
     const VkClearColorValue grey{{0.2f, 0.2f, 0.2f, 1.0f}}, opaque_black{{0.0f, 0.0f, 0.0f, 1.0f}};
-    for (auto [im, c] : {std::pair{&env_off_, &grey}, std::pair{&road_off_, &opaque_black}}) {
+    for (auto [im, c] : {std::pair{&env_off_, &grey}, std::pair{&env_off_2d_, &grey}, std::pair{&road_off_, &opaque_black}}) {
         Transition(*im, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkImageSubresourceRange r{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, im->layers};
         vkCmdClearColorImage(Cb(), im->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, c, 1, &r);
@@ -3356,7 +3358,7 @@ VkImageView VulkanBackend::BindTexture(const State& s, int stage, DrawTextures& 
     // way the other env textures did before they were matched — dark grey here too, never the shipped sky.
     // Matched on the object alone, not on d.cube: Describe may report it as a single face, not a cube.
     if (s.textures[size_t(stage)] == game::g_garage_env_tex.load())
-        return env_off_.view;
+        return d.cube ? env_off_.view : env_off_2d_.view;
     if (!d.cube && !game::Opt().road_reflections && d.data && d.data == game::g_road_reflection.load())
         return road_off_.view;
     if (tit != targets_.end() && d.cube && !fi.depth && !fi.compressed) {
